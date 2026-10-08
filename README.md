@@ -17,32 +17,41 @@ YAML-сценарии, имитирующие работу пользовате�
                    │    │        dryrun.py     (только лог; вне Windows и с --dry-run)
                    ▼    ▼
        detect/omniparser.py ──► locator.py (нечёткий поиск по тексту/подписи, index, region, offset)
-         ├─ YOLO icon_detect      — интерактивные области
-         └─ EasyOCR (en, ru)      — текст
+         ├─ YOLO icon_detect (ONNX)            — интерактивные области
+         └─ RapidOCR PP-OCRv5 (ONNX, ru+en)    — текст, с кэшем распознанных строк
 ```
 
 | Модуль | Что делает |
 |---|---|
 | `capture.py` | Снимок монитора/региона через `mss`, включает per-monitor DPI awareness, чтобы координаты совпадали на 125–150% масштабе |
 | `detect/omniparser.py` | Пайплайн OmniParser v2 без подписей иконок: YOLO + OCR, текст внутри области становится её содержимым; области без текста доступны по `id` |
-| `detect/weights.py` | Скачивает `icon_detect` (~40 МБ) с Hugging Face в `~/.clickmimic/weights` (путь меняется через `CLICKMIMIC_WEIGHTS`) |
+| `detect/yolo_onnx.py` | YOLO `icon_detect` через onnxruntime (letterbox + NMS), размер входа `--imgsz` |
+| `detect/ocr.py` | RapidOCR: поиск строк + распознавание; строки, не изменившиеся с прошлого кадра, берутся из кэша |
+| `detect/models.py` | Где лежат модели: `models` рядом с exe, иначе `~/.clickmimic/models` (или `CLICKMIMIC_MODELS`) |
 | `locator.py` | Находит элемент по тексту: точное совпадение > целое слово > `rapidfuzz.ratio` (порог 80); фильтры `interactable`, `region`, `index` |
 | `input/sendinput.py` | Ввод через `SendInput`; текст печатается через `KEYEVENTF_UNICODE`, поэтому кириллица работает при любой раскладке; плавное движение мыши и случайные паузы между нажатиями |
 | `runner.py` | Выполняет шаги, ждёт появления элемента с таймаутом, failsafe (курсор в левый верхний угол останавливает сценарий), при ошибке сохраняет последний снимок |
-| `cli.py` | Команды `parse`, `run`, `download-weights` |
+| `cli.py` | Команды `parse` (с выводом времени каждого этапа, `--repeat`) и `run` |
 
 ## Установка (Windows, Python 3.10+)
 
 ```powershell
 python -m venv .venv; .venv\Scripts\activate
-# для NVIDIA GPU сначала поставьте torch с CUDA: https://pytorch.org/get-started/locally/
 pip install -e ".[vision,dev]"
-clickmimic download-weights
+# один раз: экспорт YOLO в ONNX и загрузка моделей OCR (нужны torch/ultralytics только на этот шаг)
+pip install -e ".[export]"
+python packaging/prepare_models.py
 ```
+
+Обе модели работают через onnxruntime, torch во время работы не нужен. В готовой сборке модели
+уже лежат в папке `models` рядом с exe, ничего не скачивается.
 
 Подписи иконок Florence-2 (`icon_caption`) сознательно не используются: без них не нужны ~1 ГБ весов
 и transformers. Кнопки без текста находятся по `id` из `clickmimic parse` или по координатам.
-Все веса (YOLO + EasyOCR для en/ru) занимают около 150 МБ.
+
+`clickmimic parse` печатает время каждого этапа: YOLO, поиск строк OCR, распознавание строк.
+Распознавание строк — самая дорогая часть, поэтому результаты кэшируются: на повторных снимках
+распознаются только изменившиеся строки (`parse --repeat 3` показывает эффект).
 
 ## Использование
 
@@ -81,29 +90,31 @@ steps:
 ## Готовая сборка
 
 GitHub Actions (`.github/workflows/build.yml`) на каждый push и PR гоняет тесты на Linux и Windows,
-собирает `clickmimic.exe` через PyInstaller (CPU-версия torch) и проверяет его на тестовой картинке.
+готовит ONNX-модели, собирает `clickmimic.exe` через PyInstaller и проверяет его на тестовой картинке
+(включая распознавание кириллицы) с замером времени.
 Архив `clickmimic-windows-x64.zip` лежит в артефактах запуска, а при пуше тега `v*` прикладывается к релизу.
-Веса модели в архив не входят и скачиваются при первом запуске (`clickmimic download-weights`).
+Модели входят в архив (папка `models`).
 
-Локально: `pip install -e ".[vision]" pyinstaller` и `python packaging/build_exe.py`.
+Локально: `pip install -e ".[vision,export]" pyinstaller`, `python packaging/prepare_models.py build/models`,
+`python packaging/build_exe.py build/models`.
 
 ## Тесты
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[vision,dev]"
 pytest
 ```
 
-Тесты не требуют модели и Windows: детектор подменяется фейком, ввод идёт в dry-run.
+Тесты не требуют моделей и Windows: модели и детектор подменяются фейками, ввод идёт в dry-run.
 
 ## Лицензии
 
-Веса `icon_detect` распространяются под AGPL (они основаны на YOLO).
+Веса `icon_detect` распространяются под AGPL (они основаны на YOLO) и входят в готовый архив. Модели PP-OCR — Apache 2.0.
 Учитывайте это, если программа будет распространяться.
 
 ## Следующие шаги
 
 - Проверить на реальной Windows-машине: точность на вашем софте и время распознавания на CPU/GPU.
-- Кэширование: не запускать модель повторно, если экран не изменился.
+- Кэширование YOLO и поиска строк: пропускать кадр целиком, если экран не изменился.
 - Привязка к окну (pywin32: найти окно по заголовку, активировать, снимать только его область).
 - Условия и циклы в сценариях (`if_exists`, `repeat`), запись сценария по действиям пользователя.

@@ -4,27 +4,39 @@ import argparse
 import json
 import logging
 import sys
+import time
 from pathlib import Path
 
 from .net import use_system_certs
 
 
-def _detector():
-    from .detect.omniparser import OmniParser
+def _detector(imgsz: int | None = None):
+    from .detect.omniparser import OmniParser, OmniParserConfig
 
-    return OmniParser()
+    cfg = OmniParserConfig()
+    if imgsz:
+        cfg.imgsz = imgsz
+    parser = OmniParser(cfg)
+    logging.info("Модели загружены за %.0f мс", parser.load_time * 1000)
+    return parser
 
 
 def cmd_parse(args) -> int:
     from PIL import Image
 
     from . import annotate, capture
+    from .detect.omniparser import format_timings
 
-    if args.image:
-        image, offset = Image.open(args.image).convert("RGB"), (0, 0)
-    else:
-        image, offset = capture.grab(args.monitor)
-    elements = _detector().parse(image)
+    parser = _detector(args.imgsz)
+    for n in range(args.repeat):
+        t = time.perf_counter()
+        if args.image:
+            image, offset = Image.open(args.image).convert("RGB"), (0, 0)
+        else:
+            image, offset = capture.grab(args.monitor)
+        grab_ms = (time.perf_counter() - t) * 1000
+        elements = parser.parse(image)
+        print(f"Проход {n + 1}: снимок {grab_ms:.0f} мс, {format_timings(parser.last_timings)}", file=sys.stderr)
     for e in elements:
         e.bbox = e.bbox.offset(*offset)
         print(f"{e.id:4d} {e.kind:5s} {str(e.bbox.center):>14s}  {e.content}")
@@ -47,7 +59,7 @@ def cmd_run(args) -> int:
     sc = script.load(args.script, variables)
     runner = Runner(
         sc,
-        _detector(),
+        _detector(args.imgsz),
         get_backend(args.dry_run),
         lambda: capture.grab(sc.settings.monitor),
     )
@@ -59,18 +71,6 @@ def cmd_run(args) -> int:
             runner.last_image.save("clickmimic_failure.png")
             logging.error("Последний снимок экрана: clickmimic_failure.png")
         return 1
-    return 0
-
-
-def cmd_download(args) -> int:
-    import easyocr
-
-    from .detect.omniparser import OmniParserConfig
-    from .detect.weights import ensure_weights
-
-    print(ensure_weights())
-    # EasyOCR качает свои модели (~100 МБ) при первом создании Reader; делаем это здесь же.
-    easyocr.Reader(list(OmniParserConfig().ocr_languages), gpu=False)
     return 0
 
 
@@ -88,16 +88,16 @@ def main(argv: list[str] | None = None) -> int:
     pp.add_argument("--monitor", type=int, default=1)
     pp.add_argument("--out", help="сохранить картинку с разметкой")
     pp.add_argument("--json", help="сохранить элементы в JSON")
+    pp.add_argument("--repeat", type=int, default=1, help="распознать N раз подряд (замер скорости; со 2-го раза работает кэш OCR)")
+    pp.add_argument("--imgsz", type=int, help="размер входа YOLO (по умолчанию 1280; 960/640 быстрее, но мелкие иконки теряются)")
     pp.set_defaults(func=cmd_parse)
 
     pr = sub.add_parser("run", help="выполнить сценарий")
     pr.add_argument("script")
     pr.add_argument("--var", action="append", default=[], metavar="KEY=VALUE", help="подстановка ${KEY}")
     pr.add_argument("--dry-run", action="store_true", help="распознавать, но не нажимать")
+    pr.add_argument("--imgsz", type=int, help="размер входа YOLO")
     pr.set_defaults(func=cmd_run)
-
-    pd = sub.add_parser("download-weights", help="скачать веса OmniParser v2 и модели EasyOCR")
-    pd.set_defaults(func=cmd_download)
 
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
