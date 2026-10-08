@@ -44,16 +44,19 @@ jobs:
           python -c "import torch, torchvision; print(torch.__version__, torchvision.__version__); print(torchvision.ops.nms)"
 
       - name: Build clickmimic.exe
+        shell: pwsh
         run: |
           python packaging/build_exe.py
           Get-ChildItem dist\clickmimic\_internal\torchvision -Filter "_C*"
-          if (-not (Test-Path dist\clickmimic\_internal\torchvision\_C.pyd)) { Write-Error "torchvision _C.pyd не попал в сборку"; exit 1 }
+          # torchvision 0.2x кладёт операторы в _C.pyd или _C_stable.pyd
+          if (-not (Test-Path dist\clickmimic\_internal\torchvision\_C*.pyd)) { Write-Error "torchvision _C*.pyd не попал в сборку"; exit 1 }
 
       - name: Smoke test
         shell: pwsh
         env:
           CLICKMIMIC_WEIGHTS: ${{ runner.temp }}\weights
           PYTHONUTF8: "1"
+          TORCHVISION_WARN_WHEN_EXTENSION_LOADING_FAILS: "1"
         run: |
           dist\clickmimic\clickmimic.exe --help
           if ($LASTEXITCODE -ne 0) { exit 1 }
