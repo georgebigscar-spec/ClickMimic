@@ -10,12 +10,10 @@ import PyInstaller.__main__
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Florence-2 (remote code) импортирует timm и einops динамически, статический анализ их не видит.
-HIDDEN = ["timm", "einops", "clickmimic.detect.omniparser", "clickmimic.input.sendinput"]
+HIDDEN = ["clickmimic.detect.omniparser", "clickmimic.input.sendinput"]
 # torchvision собираем целиком вместе с _C*.pyd, иначе exe падает с "torchvision::nms does not exist".
-COLLECT_ALL = ["clickmimic", "ultralytics", "easyocr", "timm", "torchvision"]
-METADATA = ["torch", "torchvision", "transformers", "tokenizers", "huggingface_hub", "safetensors", "ultralytics",
-            "timm", "einops", "easyocr", "tqdm", "regex", "requests", "packaging", "filelock",
+COLLECT_ALL = ["clickmimic", "ultralytics", "easyocr", "torchvision"]
+METADATA = ["torch", "torchvision", "huggingface_hub", "ultralytics", "easyocr", "tqdm", "regex", "requests", "packaging", "filelock",
             "numpy", "pyyaml", "pillow"]
 
 args = [

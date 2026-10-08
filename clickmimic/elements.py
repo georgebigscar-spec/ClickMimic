@@ -39,7 +39,7 @@ class UIElement:
     """Элемент интерфейса, найденный на скриншоте."""
 
     id: int
-    kind: str  # "text" (OCR) или "icon" (YOLO + подпись Florence-2)
+    kind: str  # "text" (только OCR) или "icon" (область YOLO, content = текст внутри неё)
     bbox: BBox
     content: str
     interactable: bool

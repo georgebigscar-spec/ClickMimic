@@ -9,14 +9,14 @@ DEFAULT_DIR = Path(os.environ.get("CLICKMIMIC_WEIGHTS", Path.home() / ".clickmim
 
 
 def ensure_weights(target: Path = DEFAULT_DIR) -> Path:
-    """Скачивает icon_detect (YOLO) и icon_caption (Florence-2), если их ещё нет."""
-    if (target / "icon_detect" / "model.pt").exists() and (target / "icon_caption").is_dir():
+    """Скачивает icon_detect (YOLO, ~40 МБ), если его ещё нет."""
+    if (target / "icon_detect" / "model.pt").exists():
         return target
     from huggingface_hub import snapshot_download
 
     snapshot_download(
         REPO_ID,
         local_dir=target,
-        allow_patterns=["icon_detect/*", "icon_caption/*"],
+        allow_patterns=["icon_detect/*"],
     )
     return target

@@ -1,10 +1,11 @@
-"""Обёртка над OmniParser v2: YOLO-детектор иконок + OCR + подписи Florence-2.
+"""Обёртка над OmniParser v2: YOLO-детектор интерактивных элементов + OCR.
 
-Повторяет пайплайн из microsoft/OmniParser (util/utils.py) в упрощённом виде:
+Повторяет пайплайн из microsoft/OmniParser (util/utils.py) в упрощённом виде и без подписей
+иконок Florence-2 (icon_caption), чтобы не тянуть ~1 ГБ весов и transformers:
 1. YOLO (icon_detect) находит интерактивные области.
 2. EasyOCR находит текст.
-3. Текст, лежащий внутри иконки, становится её содержимым; остальной текст — отдельные элементы.
-4. Иконки без текста подписываются fine-tuned Florence-2 (icon_caption).
+3. Текст, лежащий внутри области, становится её содержимым; остальной текст — отдельные элементы.
+   Области без текста остаются с пустым content: на них ссылаются по id или координатам.
 """
 from __future__ import annotations
 
@@ -26,24 +27,7 @@ class OmniParserConfig:
     imgsz: int = 1280
     ocr_languages: tuple[str, ...] = ("en", "ru")
     ocr_text_threshold: float = 0.8
-    captions: bool = True  # подписи иконок медленные на CPU; можно выключить
-    caption_batch: int = 64
     device: str | None = None  # None = cuda, если доступна
-
-
-def _patch_florence_imports() -> None:
-    """Florence-2 remote code требует flash_attn при импорте, хотя без CUDA он не нужен."""
-    from transformers import dynamic_module_utils
-
-    original = dynamic_module_utils.get_imports
-    if getattr(original, "_clickmimic", False):
-        return
-
-    def get_imports(filename):
-        return [i for i in original(filename) if i != "flash_attn"]
-
-    get_imports._clickmimic = True
-    dynamic_module_utils.get_imports = get_imports
 
 
 class OmniParser:
@@ -59,20 +43,6 @@ class OmniParser:
         import easyocr
 
         self.ocr = easyocr.Reader(list(self.cfg.ocr_languages), gpu=self.device == "cuda")
-
-        self.caption_model = self.caption_processor = None
-        if self.cfg.captions:
-            from transformers import AutoModelForCausalLM, AutoProcessor
-
-            _patch_florence_imports()
-            dtype = torch.float16 if self.device == "cuda" else torch.float32
-            self.caption_processor = AutoProcessor.from_pretrained(
-                "microsoft/Florence-2-base", trust_remote_code=True
-            )
-            self.caption_model = AutoModelForCausalLM.from_pretrained(
-                str(weights / "icon_caption"), torch_dtype=dtype, trust_remote_code=True
-            ).to(self.device)
-            self._dtype = dtype
 
     def _detect_icons(self, image: Image.Image) -> list[tuple[BBox, float]]:
         result = self.yolo.predict(
@@ -95,37 +65,14 @@ class OmniParser:
             out.append((BBox(min(xs), min(ys), max(xs), max(ys)), text.strip(), float(conf)))
         return [t for t in out if t[1]]
 
-    def _caption(self, image: Image.Image, boxes: list[BBox]) -> list[str]:
-        if not boxes or self.caption_model is None:
-            return [""] * len(boxes)
-        import torch
-
-        crops = [image.crop((b.x1, b.y1, b.x2, b.y2)).resize((64, 64)) for b in boxes]
-        captions: list[str] = []
-        for i in range(0, len(crops), self.cfg.caption_batch):
-            batch = crops[i : i + self.cfg.caption_batch]
-            inputs = self.caption_processor(
-                images=batch, text=["<CAPTION>"] * len(batch), return_tensors="pt", do_resize=False
-            )
-            with torch.inference_mode():
-                ids = self.caption_model.generate(
-                    input_ids=inputs["input_ids"].to(self.device),
-                    pixel_values=inputs["pixel_values"].to(self.device, self._dtype),
-                    max_new_tokens=20,
-                    num_beams=1,
-                    do_sample=False,
-                )
-            captions += [t.strip() for t in self.caption_processor.batch_decode(ids, skip_special_tokens=True)]
-        return captions
-
     def parse(self, image: Image.Image) -> list[UIElement]:
         image = image.convert("RGB")
         icons = self._detect_icons(image)
         texts = self._detect_text(image)
-        return merge(icons, texts, image, self._caption)
+        return merge(icons, texts)
 
 
-def merge(icons, texts, image, captioner) -> list[UIElement]:
+def merge(icons, texts) -> list[UIElement]:
     """Объединяет YOLO-боксы и OCR. Вынесено отдельно ради тестов без модели."""
     # Убираем почти полностью совпадающие иконки (оставляем более уверенную).
     icons = sorted(icons, key=lambda t: -t[1])
@@ -144,11 +91,6 @@ def merge(icons, texts, image, captioner) -> list[UIElement]:
         inside.sort(key=lambda it: (it[1][0].y1, it[1][0].x1))
         used_text.update(i for i, _ in inside)
         icon_text.append(" ".join(t[1] for _, t in inside))
-
-    need_caption = [i for i, txt in enumerate(icon_text) if not txt]
-    captions = captioner(image, [kept[i][0] for i in need_caption])
-    for i, cap in zip(need_caption, captions):
-        icon_text[i] = cap
 
     elements: list[UIElement] = []
     for (box, score), txt in zip(kept, icon_text):

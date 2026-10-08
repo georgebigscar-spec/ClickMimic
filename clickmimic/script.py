@@ -33,7 +33,6 @@ class Settings:
     move_duration: float = 0.25
     typing_interval: float = 0.02
     step_delay: float = 0.3
-    captions: bool = True
 
 
 @dataclass
@@ -90,7 +89,7 @@ def _parse_step(raw: dict | str, n: int) -> Step:
     if action == "scroll":
         spec = value if isinstance(value, dict) else {"amount": value}
         amount = int(spec.pop("amount", -3))
-        target = Target.from_spec(spec) if any(k in spec for k in ("text", "icon", "id", "at")) else None
+        target = Target.from_spec(spec) if any(k in spec for k in ("text", "id", "at")) else None
         return Step(action, target, {"amount": amount}, optional, n)
     if action == "type":
         return Step(action, None, {"text": str(value), **extra}, optional, n)
