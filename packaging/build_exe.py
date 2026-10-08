@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 HIDDEN = ["clickmimic.detect.omniparser", "clickmimic.input.sendinput"]
 # torchvision собираем целиком вместе с _C*.pyd, иначе exe падает с "torchvision::nms does not exist".
 COLLECT_ALL = ["clickmimic", "ultralytics", "easyocr", "torchvision"]
-METADATA = ["torch", "torchvision", "huggingface_hub", "ultralytics", "easyocr", "tqdm", "regex", "requests", "packaging", "filelock",
+METADATA = ["torch", "torchvision", "huggingface_hub", "ultralytics", "easyocr", "tqdm", "requests", "packaging", "filelock",
             "numpy", "pyyaml", "pillow"]
 
 args = [

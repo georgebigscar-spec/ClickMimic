@@ -47,6 +47,7 @@ jobs:
         shell: pwsh
         run: |
           python packaging/build_exe.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
           Get-ChildItem dist\clickmimic\_internal\torchvision -Filter "_C*"
           # torchvision 0.2x кладёт операторы в _C.pyd или _C_stable.pyd
           if (-not (Test-Path dist\clickmimic\_internal\torchvision\_C*.pyd)) { Write-Error "torchvision _C*.pyd не попал в сборку"; exit 1 }
