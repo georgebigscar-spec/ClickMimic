@@ -10,9 +10,10 @@ import PyInstaller.__main__
 
 ROOT = Path(__file__).resolve().parent.parent
 
-HIDDEN = ["clickmimic.detect.omniparser", "clickmimic.input.sendinput"]
+HIDDEN = ["clickmimic.detect.omniparser", "clickmimic.detect.weights", "clickmimic.input.sendinput", "huggingface_hub"]
 # torchvision собираем целиком вместе с _C*.pyd, иначе exe падает с "torchvision::nms does not exist".
-COLLECT_ALL = ["clickmimic", "ultralytics", "easyocr", "torchvision"]
+# huggingface_hub раньше попадал в сборку транзитивно через transformers; теперь собираем явно.
+COLLECT_ALL = ["clickmimic", "ultralytics", "easyocr", "torchvision", "huggingface_hub"]
 METADATA = ["torch", "torchvision", "huggingface_hub", "ultralytics", "easyocr", "tqdm", "requests", "packaging", "filelock",
             "numpy", "pyyaml", "pillow"]
 
