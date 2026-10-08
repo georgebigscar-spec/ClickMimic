@@ -106,3 +106,12 @@ def test_example_script_parses():
     sc = script.load("scripts/notepad_demo.yaml", {"name": "Георгий", "file": "a.txt"})
     assert sc.steps[0].args == {"keys": ["win", "r"]}
     assert sc.steps[10].optional
+
+
+def test_use_system_certs_does_not_raise():
+    import ssl
+
+    from clickmimic.net import use_system_certs
+
+    use_system_certs()
+    ssl.create_default_context()
