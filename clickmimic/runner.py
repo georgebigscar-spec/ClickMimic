@@ -28,7 +28,8 @@ class Aborted(RuntimeError):
 
 class Runner:
     def __init__(self, script: Script, detector: Detector, backend: InputBackend, grabber: Grabber,
-                 sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic):
+                 sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
+                 stop: Callable[[], bool] | None = None):
         self.script = script
         self.s = script.settings
         self.detector = detector
@@ -37,6 +38,7 @@ class Runner:
         self.sleep = sleep
         self.clock = clock
         self.last_image: Image.Image | None = None
+        self.stop = stop or (lambda: False)
 
     def snapshot(self) -> list[UIElement]:
         """Распознаёт экран и переводит координаты элементов в экранные."""
@@ -53,6 +55,8 @@ class Runner:
         return elements
 
     def _check_failsafe(self) -> None:
+        if self.stop():
+            raise Aborted("Остановлено пользователем")
         # Как в pyautogui: курсор в левом верхнем углу экрана останавливает сценарий.
         if self.input.position() == (0, 0):
             raise Aborted("Остановлено: курсор в левом верхнем углу (failsafe)")
