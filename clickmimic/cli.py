@@ -6,6 +6,8 @@ import logging
 import sys
 from pathlib import Path
 
+from .net import use_system_certs
+
 
 def _detector():
     from .detect.omniparser import OmniParser
@@ -61,9 +63,14 @@ def cmd_run(args) -> int:
 
 
 def cmd_download(args) -> int:
+    import easyocr
+
+    from .detect.omniparser import OmniParserConfig
     from .detect.weights import ensure_weights
 
     print(ensure_weights())
+    # EasyOCR качает свои модели (~100 МБ) при первом создании Reader; делаем это здесь же.
+    easyocr.Reader(list(OmniParserConfig().ocr_languages), gpu=False)
     return 0
 
 
@@ -89,11 +96,12 @@ def main(argv: list[str] | None = None) -> int:
     pr.add_argument("--dry-run", action="store_true", help="распознавать, но не нажимать")
     pr.set_defaults(func=cmd_run)
 
-    pd = sub.add_parser("download-weights", help="скачать веса OmniParser v2")
+    pd = sub.add_parser("download-weights", help="скачать веса OmniParser v2 и модели EasyOCR")
     pd.set_defaults(func=cmd_download)
 
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
+    use_system_certs()
     return args.func(args)
 
 
