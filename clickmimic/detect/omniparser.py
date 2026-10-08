@@ -1,14 +1,15 @@
-"""Обёртка над OmniParser v2: YOLO-детектор интерактивных элементов + OCR.
+"""Распознавание экрана по схеме OmniParser v2: YOLO-детектор интерактивных элементов + OCR.
 
-Повторяет пайплайн из microsoft/OmniParser (util/utils.py) в упрощённом виде и без подписей
-иконок Florence-2 (icon_caption), чтобы не тянуть ~1 ГБ весов и transformers:
-1. YOLO (icon_detect) находит интерактивные области.
-2. EasyOCR находит текст.
+Повторяет пайплайн из microsoft/OmniParser (util/utils.py) в упрощённом виде, без подписей
+иконок Florence-2. Обе модели работают через onnxruntime, без torch:
+1. YOLO (icon_detect, экспорт в ONNX) находит интерактивные области.
+2. RapidOCR (PP-OCRv5) находит и распознаёт текст.
 3. Текст, лежащий внутри области, становится её содержимым; остальной текст — отдельные элементы.
    Области без текста остаются с пустым content: на них ссылаются по id или координатам.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,60 +17,52 @@ import numpy as np
 from PIL import Image
 
 from ..elements import BBox, UIElement
-from .weights import ensure_weights
+from .models import ICON_DETECT, OCR_DIR, models_dir, require
 
 
 @dataclass
 class OmniParserConfig:
-    weights_dir: Path | None = None
+    models_dir: Path | None = None
     box_threshold: float = 0.05
     iou_threshold: float = 0.1
-    imgsz: int = 1280
-    ocr_languages: tuple[str, ...] = ("en", "ru")
-    ocr_text_threshold: float = 0.8
-    device: str | None = None  # None = cuda, если доступна
+    imgsz: int = 1280  # меньше = быстрее, но мелкие иконки теряются
+    ocr_min_score: float = 0.5
 
 
 class OmniParser:
     def __init__(self, config: OmniParserConfig | None = None):
-        import torch
-        from ultralytics import YOLO
+        from .ocr import TextReader
+        from .yolo_onnx import IconDetector
 
         self.cfg = config or OmniParserConfig()
-        weights = ensure_weights(self.cfg.weights_dir) if self.cfg.weights_dir else ensure_weights()
-        self.device = self.cfg.device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.yolo = YOLO(str(weights / "icon_detect" / "model.pt"))
-
-        import easyocr
-
-        self.ocr = easyocr.Reader(list(self.cfg.ocr_languages), gpu=self.device == "cuda")
-
-    def _detect_icons(self, image: Image.Image) -> list[tuple[BBox, float]]:
-        result = self.yolo.predict(
-            image,
-            conf=self.cfg.box_threshold,
-            iou=self.cfg.iou_threshold,
-            imgsz=self.cfg.imgsz,
-            device=self.device,
-            verbose=False,
-        )[0]
-        boxes = result.boxes.xyxy.cpu().numpy()
-        scores = result.boxes.conf.cpu().numpy()
-        return [(BBox(*map(float, b)), float(s)) for b, s in zip(boxes, scores)]
-
-    def _detect_text(self, image: Image.Image) -> list[tuple[BBox, str, float]]:
-        out = []
-        for quad, text, conf in self.ocr.readtext(np.asarray(image), text_threshold=self.cfg.ocr_text_threshold):
-            xs = [p[0] for p in quad]
-            ys = [p[1] for p in quad]
-            out.append((BBox(min(xs), min(ys), max(xs), max(ys)), text.strip(), float(conf)))
-        return [t for t in out if t[1]]
+        root = self.cfg.models_dir or models_dir()
+        t = time.perf_counter()
+        self.icons = IconDetector(
+            require(root / ICON_DETECT), self.cfg.imgsz, self.cfg.box_threshold, self.cfg.iou_threshold
+        )
+        self.ocr = TextReader(require(root / OCR_DIR), self.cfg.ocr_min_score)
+        self.load_time = time.perf_counter() - t
+        self.last_timings: dict[str, float] = {}
 
     def parse(self, image: Image.Image) -> list[UIElement]:
-        image = image.convert("RGB")
-        icons = self._detect_icons(image)
-        texts = self._detect_text(image)
-        return merge(icons, texts)
+        t0 = time.perf_counter()
+        rgb = np.asarray(image.convert("RGB"))
+        icons = self.icons.detect(rgb)
+        t1 = time.perf_counter()
+        texts = self.ocr.read(rgb)
+        t2 = time.perf_counter()
+        elements = merge(icons, texts)
+        t3 = time.perf_counter()
+        self.last_timings = {"yolo": t1 - t0, **self.ocr.last_stats, "merge": t3 - t2, "total": t3 - t0}
+        return elements
+
+
+def format_timings(t: dict[str, float]) -> str:
+    return (
+        f"YOLO {t['yolo'] * 1000:.0f} мс, OCR поиск {t['ocr_det'] * 1000:.0f} мс, "
+        f"OCR распознавание {t['ocr_rec'] * 1000:.0f} мс ({int(t['lines_recognized'])} из {int(t['lines'])} строк, "
+        f"остальные из кэша), всего {t['total'] * 1000:.0f} мс"
+    )
 
 
 def merge(icons, texts) -> list[UIElement]:

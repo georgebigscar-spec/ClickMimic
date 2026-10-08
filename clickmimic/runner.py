@@ -43,6 +43,11 @@ class Runner:
         image, (ox, oy) = self.grab()
         self.last_image = image
         elements = self.detector.parse(image)
+        timings = getattr(self.detector, "last_timings", None)
+        if timings:
+            from .detect.omniparser import format_timings
+
+            log.info("  экран распознан: %s", format_timings(timings))
         for e in elements:
             e.bbox = e.bbox.offset(ox, oy)
         return elements

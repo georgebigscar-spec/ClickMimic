@@ -1,21 +1,27 @@
 """Сборка clickmimic.exe (onedir) через PyInstaller.
 
-Запуск из корня репозитория, после `pip install -e ".[vision]" pyinstaller`:
-    python packaging/build_exe.py
-Результат: dist/clickmimic/clickmimic.exe. Веса модели не вшиваются, скачиваются при первом запуске.
+Запуск из корня репозитория, после `pip install -e ".[vision]" pyinstaller` и
+`python packaging/prepare_models.py build/models`:
+    python packaging/build_exe.py build/models
+Результат: dist/clickmimic/clickmimic.exe и dist/clickmimic/models (ONNX-модели внутри сборки).
 """
+import shutil
+import sys
 from pathlib import Path
 
 import PyInstaller.__main__
 
 ROOT = Path(__file__).resolve().parent.parent
+MODELS = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "build" / "models"
+DIST = ROOT / "dist" / "clickmimic"
 
-HIDDEN = ["clickmimic.detect.omniparser", "clickmimic.detect.weights", "clickmimic.input.sendinput", "huggingface_hub", "truststore", "certifi"]
-# torchvision собираем целиком вместе с _C*.pyd, иначе exe падает с "torchvision::nms does not exist".
-# huggingface_hub раньше попадал в сборку транзитивно через transformers; теперь собираем явно.
-COLLECT_ALL = ["clickmimic", "ultralytics", "easyocr", "torchvision", "huggingface_hub", "certifi"]
-METADATA = ["torch", "torchvision", "huggingface_hub", "ultralytics", "easyocr", "tqdm", "requests", "packaging", "filelock",
-            "numpy", "pyyaml", "pillow"]
+HIDDEN = ["clickmimic.detect.omniparser", "clickmimic.input.sendinput", "truststore", "certifi"]
+# rapidocr читает свои config.yaml/default_models.yaml с диска.
+COLLECT_ALL = ["clickmimic", "rapidocr", "certifi"]
+# Подготовка моделей ставит torch/ultralytics в то же окружение; в exe они не нужны.
+EXCLUDE = ["torch", "torchvision", "ultralytics", "paddle", "openvino", "tensorrt", "MNN",
+           "easyocr", "matplotlib", "pandas", "scipy", "IPython", "tkinter"]
+METADATA = ["rapidocr", "onnxruntime", "numpy", "pyyaml", "pillow", "requests", "tqdm"]
 
 args = [
     str(ROOT / "packaging" / "launcher.py"),
@@ -25,11 +31,17 @@ args = [
     "--noconfirm",
     "--clean",
     "--distpath", str(ROOT / "dist"),
-    "--workpath", str(ROOT / "build"),
+    "--workpath", str(ROOT / "build" / "pyinstaller"),
     "--specpath", str(ROOT / "build"),
 ]
 args += [f"--hidden-import={m}" for m in HIDDEN]
 args += [f"--collect-all={m}" for m in COLLECT_ALL]
+args += [f"--exclude-module={m}" for m in EXCLUDE]
 args += [f"--copy-metadata={m}" for m in METADATA]
 
 PyInstaller.__main__.run(args)
+
+# Встроенные в пакет rapidocr модели по умолчанию (PP-OCRv6, без кириллицы) не используются.
+for f in (DIST / "_internal" / "rapidocr" / "models").glob("*.onnx"):
+    f.unlink()
+shutil.copytree(MODELS, DIST / "models", dirs_exist_ok=True)
