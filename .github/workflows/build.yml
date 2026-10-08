@@ -1,0 +1,106 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
+  windows-exe:
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies (CPU torch)
+        run: |
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[vision]" "pyinstaller>=6.10"
+          python -c "import torch, torchvision; print(torch.__version__, torchvision.__version__); print(torchvision.ops.nms)"
+
+      - name: Build clickmimic.exe
+        shell: pwsh
+        run: |
+          python packaging/build_exe.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Get-ChildItem dist\clickmimic\_internal\torchvision -Filter "_C*"
+          # torchvision 0.2x кладёт операторы в _C.pyd или _C_stable.pyd
+          if (-not (Test-Path dist\clickmimic\_internal\torchvision\_C*.pyd)) { Write-Error "torchvision _C*.pyd не попал в сборку"; exit 1 }
+
+      - name: Smoke test
+        shell: pwsh
+        env:
+          CLICKMIMIC_WEIGHTS: ${{ runner.temp }}\weights
+          PYTHONUTF8: "1"
+          TORCHVISION_WARN_WHEN_EXTENSION_LOADING_FAILS: "1"
+        run: |
+          dist\clickmimic\clickmimic.exe --help
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          python packaging/smoke_image.py smoke.png
+          dist\clickmimic\clickmimic.exe download-weights
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          dist\clickmimic\clickmimic.exe parse --image smoke.png --json smoke.json --out smoke_parsed.png
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $n = (Get-Content smoke.json -Raw | ConvertFrom-Json).Count
+          Write-Host "Найдено элементов: $n"
+          if ($n -lt 1) { Write-Error "Модель ничего не нашла"; exit 1 }
+
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path dist\clickmimic -DestinationPath clickmimic-windows-x64.zip -CompressionLevel Optimal
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clickmimic-windows-x64
+          path: clickmimic-windows-x64.zip
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-output
+          path: |
+            smoke.png
+            smoke_parsed.png
+            smoke.json
+          if-no-files-found: ignore
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: windows-exe
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: clickmimic-windows-x64
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: clickmimic-windows-x64.zip
+          generate_release_notes: true

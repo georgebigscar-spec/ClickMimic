@@ -11,8 +11,8 @@ from .elements import BBox, UIElement
 
 @dataclass
 class Target:
-    text: str | None = None  # текст элемента (OCR или подпись иконки)
-    icon: str | None = None  # подпись иконки (только kind == "icon")
+    text: str | None = None  # текст элемента (OCR)
+    interactable: bool | None = None  # True = только области YOLO (кнопки, поля и т.п.)
     id: int | None = None  # id из вывода `clickmimic parse`
     exact: bool = False
     index: int = 0  # какое по счёту совпадение в порядке чтения
@@ -34,7 +34,7 @@ class Target:
     def describe(self) -> str:
         if self.at:
             return f"точка {self.at}"
-        parts = [f"{k}={v!r}" for k, v in (("text", self.text), ("icon", self.icon), ("id", self.id)) if v is not None]
+        parts = [f"{k}={v!r}" for k, v in (("text", self.text), ("id", self.id)) if v is not None]
         return ", ".join(parts) + (f" #{self.index}" if self.index else "")
 
 
@@ -65,12 +65,11 @@ def find(elements: list[UIElement], target: Target) -> UIElement | None:
     if target.id is not None:
         matches = [e for e in candidates if e.id == target.id]
     else:
-        query = target.icon if target.icon is not None else target.text
-        if query is None:
-            raise ValueError("Цель должна содержать text, icon, id или at")
-        if target.icon is not None:
-            candidates = [e for e in candidates if e.kind == "icon"]
-        scored = [(score(query, e.content, target.exact), e) for e in candidates]
+        if target.text is None:
+            raise ValueError("Цель должна содержать text, id или at")
+        if target.interactable is not None:
+            candidates = [e for e in candidates if e.interactable == target.interactable]
+        scored = [(score(target.text, e.content, target.exact), e) for e in candidates]
         matches = [e for s, e in scored if s >= target.min_score]
         # Лучшие совпадения первыми; при равенстве — порядок чтения (id).
         best = {e.id: s for s, e in scored}
