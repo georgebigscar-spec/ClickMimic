@@ -4,3 +4,6 @@ __pycache__/
 *.png
 .venv/
 weights/
+build/
+dist/
+*.spec
