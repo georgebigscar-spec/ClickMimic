@@ -1,0 +1,21 @@
+name: Блокнот — ввод текста и сохранение
+settings:
+  monitor: 1
+  timeout: 15
+  move_duration: 0.3
+  typing_interval: 0.03
+
+steps:
+  - hotkey: [win, r]
+  - wait: 1
+  - type: "notepad\n"
+  - wait_for: {text: "File"}
+  - type: "Привет, ${name}! Это ClickMimic.\n"
+  - click: {text: "File"}
+  - click: {text: "Save as"}
+  - wait_for: {text: "File name"}
+  - type: "${file}"
+  - hotkey: enter
+  - click: {text: "Yes"}
+    optional: true        # окно «заменить файл?» появляется не всегда
+  - screenshot: notepad_done.png

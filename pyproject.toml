@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clickmimic"
+version = "0.1.0"
+description = "Windows UI automation: OmniParser v2 screen parsing + scripted mouse/keyboard input"
+requires-python = ">=3.10"
+dependencies = [
+    "mss>=9.0",
+    "pillow>=10.0",
+    "numpy>=1.26",
+    "pyyaml>=6.0",
+    "rapidfuzz>=3.0",
+]
+
+[project.optional-dependencies]
+# Тяжёлые зависимости модели вынесены отдельно, чтобы тесты и dry-run работали без GPU.
+vision = [
+    "torch>=2.2",
+    "ultralytics>=8.3",
+    "transformers>=4.45,<4.50",
+    "timm",
+    "einops",
+    "easyocr>=1.7",
+    "huggingface_hub>=0.24",
+]
+dev = ["pytest>=8"]
+
+[project.scripts]
+clickmimic = "clickmimic.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["clickmimic*"]
