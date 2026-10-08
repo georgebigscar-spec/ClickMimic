@@ -21,7 +21,7 @@ dependencies = [
 # Распознавание: обе модели работают через onnxruntime, torch не нужен.
 vision = [
     "onnxruntime>=1.18",
-    "rapidocr>=3.4,<4",
+    "rapidocr>=3.4,<3.11",
 ]
 # Только для подготовки моделей (экспорт YOLO в ONNX): packaging/prepare_models.py
 export = [
