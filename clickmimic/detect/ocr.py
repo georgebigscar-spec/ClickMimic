@@ -39,7 +39,14 @@ def build_engine(model_root: Path):
     params["Det.model_type"] = ModelType(params["Det.model_type"])
     params["Rec.model_type"] = ModelType(params["Rec.model_type"])
     params["Global.model_root_dir"] = str(model_root)
-    return RapidOCR(params=params)
+    engine = RapidOCR(params=params)
+    # С rapidocr 3.10 модели загружаются лениво, при первом полном вызове движка, а text_det и
+    # text_rec до этого равны None. Мы зовём их напрямую, поэтому загружаем модели сразу
+    # (заодно prepare_models скачивает их на этапе сборки, а не при первом запуске).
+    for loader in ("_load_det_model", "_load_rec_model"):
+        if hasattr(engine, loader):
+            getattr(engine, loader)()
+    return engine
 
 
 class TextReader:
