@@ -70,6 +70,10 @@ def cmd_download(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        # Кириллица в выводе (включая --help) не должна падать в консоли/пайпе с cp1251/cp866.
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     p = argparse.ArgumentParser(prog="clickmimic", description="Распознавание UI (OmniParser v2) и имитация действий пользователя")
     p.add_argument("-v", "--verbose", action="store_true")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -93,10 +97,6 @@ def main(argv: list[str] | None = None) -> int:
     pd.set_defaults(func=cmd_download)
 
     args = p.parse_args(argv)
-    for stream in (sys.stdout, sys.stderr):
-        # Кириллица в выводе не должна падать в консоли/пайпе с cp1251/cp866.
-        if hasattr(stream, "reconfigure"):
-            stream.reconfigure(errors="replace")
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
     return args.func(args)
 
