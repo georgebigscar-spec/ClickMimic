@@ -41,9 +41,13 @@ jobs:
         run: |
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -e ".[vision]" "pyinstaller>=6.10"
+          python -c "import torch, torchvision; print(torch.__version__, torchvision.__version__); print(torchvision.ops.nms)"
 
       - name: Build clickmimic.exe
-        run: python packaging/build_exe.py
+        run: |
+          python packaging/build_exe.py
+          Get-ChildItem dist\clickmimic\_internal\torchvision -Filter "_C*"
+          if (-not (Test-Path dist\clickmimic\_internal\torchvision\_C.pyd)) { Write-Error "torchvision _C.pyd не попал в сборку"; exit 1 }
 
       - name: Smoke test
         shell: pwsh

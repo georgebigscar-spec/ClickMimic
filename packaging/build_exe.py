@@ -12,8 +12,9 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # Florence-2 (remote code) импортирует timm и einops динамически, статический анализ их не видит.
 HIDDEN = ["timm", "einops", "clickmimic.detect.omniparser", "clickmimic.input.sendinput"]
-COLLECT_ALL = ["clickmimic", "ultralytics", "easyocr", "timm"]
-METADATA = ["torch", "transformers", "tokenizers", "huggingface_hub", "safetensors", "ultralytics",
+# torchvision собираем целиком вместе с _C.pyd, иначе exe падает с "torchvision::nms does not exist".
+COLLECT_ALL = ["clickmimic", "ultralytics", "easyocr", "timm", "torchvision"]
+METADATA = ["torch", "torchvision", "transformers", "tokenizers", "huggingface_hub", "safetensors", "ultralytics",
             "timm", "einops", "easyocr", "tqdm", "regex", "requests", "packaging", "filelock",
             "numpy", "pyyaml", "pillow"]
 
