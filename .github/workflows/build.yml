@@ -103,6 +103,21 @@ jobs:
           if ($els.Count -lt 1) { Write-Error "Модель ничего не нашла"; exit 1 }
           if ($texts -notmatch "Отмена") { Write-Error "OCR не распознал кириллицу"; exit 1 }
 
+      - name: Install Russian for Windows OCR
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          Add-WindowsCapability -Online -Name "Language.OCR~~~ru-RU~0.0.1.0" | Out-String
+          Get-WindowsCapability -Online -Name "Language.OCR*" | Where-Object State -eq Installed | Select-Object Name
+
+      - name: RapidOCR vs Windows OCR
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          python packaging/ocr_compare.py build/models smoke.png smoke_small.png
+          dist\clickmimic\clickmimic.exe parse --image smoke.png --ocr windows --repeat 2 --json smoke_winocr.json > $null
+          if ($LASTEXITCODE -ne 0) { Write-Error "parse --ocr windows упал"; exit 1 }
+
       - name: Recording speed (full frame vs strip around the click)
         env:
           PYTHONUTF8: "1"
@@ -126,6 +141,7 @@ jobs:
             smoke.png
             smoke_parsed.png
             smoke.json
+            smoke_winocr.json
             screen_parsed.png
           if-no-files-found: ignore
 
