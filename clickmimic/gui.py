@@ -831,7 +831,8 @@ class RecordSession:
         self.recorder.wait(5)
         text = self.recorder.builder.to_yaml()
         self.top.destroy()
-        log.info("Запись остановлена: %d шагов", len(self.recorder.builder.steps()))
+        log.info("Запись остановлена: %d шагов (кликов поймано: %s, вне окна: %d)", len(self.recorder.builder.steps()),
+                 getattr(self.hooks, "received", "?"), self.recorder.ignored)
         self.app._recording_done(text)
 
     def abort(self) -> None:

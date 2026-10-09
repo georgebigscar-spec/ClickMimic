@@ -119,9 +119,11 @@ class InputHooks:
     """on_mouse(button, x, y), on_wheel(x, y, delta), on_key(name, char, mods)."""
 
     def __init__(self, on_mouse: Callable, on_wheel: Callable, on_key: Callable,
-                 key_filter: Callable[[], bool] = lambda: True):
+                 key_filter: Callable[[], bool] = lambda: True, skip_injected: bool = True):
         self.on_mouse, self.on_wheel, self.on_key = on_mouse, on_wheel, on_key
         self.key_filter = key_filter  # False = нажатие не для записи (например, фокус в окне программы)
+        self.skip_injected = skip_injected  # False только в тестах: там ввод идёт через SendInput
+        self.received = 0  # сколько нажатий дошло до хуков (для диагностики)
         self._thread: threading.Thread | None = None
         self._thread_id = 0
         self._ready = threading.Event()
@@ -143,13 +145,14 @@ class InputHooks:
     def _mouse_proc(self, code, wparam, lparam):
         if code == 0:
             info = ctypes.cast(lparam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
-            if not info.flags & LLMHF_INJECTED:
+            if not (self.skip_injected and info.flags & LLMHF_INJECTED):
                 try:
                     if wparam == WM_MOUSEWHEEL:
                         delta = ctypes.c_short(info.mouseData >> 16).value
                         self.on_wheel(info.pt.x, info.pt.y, delta)
                     elif wparam in (WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MBUTTONDOWN):
                         button = {WM_LBUTTONDOWN: "left", WM_RBUTTONDOWN: "right"}.get(wparam, "middle")
+                        self.received += 1
                         self.on_mouse(button, info.pt.x, info.pt.y)
                 except Exception:
                     log.exception("Ошибка в хуке мыши")
@@ -158,7 +161,7 @@ class InputHooks:
     def _key_proc(self, code, wparam, lparam):
         if code == 0 and wparam in (WM_KEYDOWN, WM_SYSKEYDOWN):
             info = ctypes.cast(lparam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
-            if not info.flags & LLKHF_INJECTED and info.vkCode not in MODIFIERS:
+            if not (self.skip_injected and info.flags & LLKHF_INJECTED) and info.vkCode not in MODIFIERS:
                 try:
                     name = KEY_NAMES.get(info.vkCode)
                     if name == "pause" or self.key_filter():
