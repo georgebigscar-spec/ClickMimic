@@ -23,6 +23,10 @@ class IconDetector:
             opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         self.session = ort.InferenceSession(str(model_path), opts, providers=providers)
         self.device = "gpu" if self.session.get_providers()[0] == "DmlExecutionProvider" else "cpu"
+        if providers[0] == "DmlExecutionProvider" and self.device == "cpu":
+            import logging
+
+            logging.getLogger("clickmimic").warning("DirectML не создал сессию (нет подходящей видеокарты?), работаю на процессоре")
         self.input_name = self.session.get_inputs()[0].name
         self.imgsz = imgsz
         self.conf = conf
