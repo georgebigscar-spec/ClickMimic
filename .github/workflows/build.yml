@@ -42,13 +42,18 @@ jobs:
           # torch нужен только для экспорта YOLO в ONNX; в exe он не попадает.
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -e ".[vision,export]" "pyinstaller>=6.10"
-          # В exe идёт сборка onnxruntime с DirectML: она умеет и процессор, и любую видеокарту DX12.
-          pip uninstall -y onnxruntime
-          pip install onnxruntime-directml
-          python -c "import onnxruntime as o; print(o.__version__, o.get_available_providers())"
 
       - name: Prepare ONNX models
         run: python packaging/prepare_models.py build/models
+
+      - name: Switch to onnxruntime with DirectML
+        run: |
+          # В exe идёт сборка onnxruntime с DirectML: она умеет и процессор, и любую видеокарту DX12.
+          # Только после экспорта моделей: ultralytics при экспорте сам ставит обычный onnxruntime
+          # поверх. Оба пакета пишут в одну папку, поэтому сносим оба и ставим DirectML заново.
+          pip uninstall -y onnxruntime onnxruntime-directml
+          pip install --force-reinstall --no-deps onnxruntime-directml
+          python -c "import onnxruntime as o; p = o.get_available_providers(); print(o.__version__, p); assert 'DmlExecutionProvider' in p"
 
       - name: Build clickmimic.exe
         shell: pwsh
@@ -78,8 +83,10 @@ jobs:
           Write-Host "--- тот же кадр повторно"
           dist\clickmimic\clickmimic.exe parse --image smoke.png --repeat 2 --same-image > $null
           Write-Host "--- DirectML (на раннере без видеокарты это программный адаптер или процессор)"
-          dist\clickmimic\clickmimic.exe parse --image smoke.png --device gpu --repeat 2 > $null
+          $gpu = cmd /c "dist\clickmimic\clickmimic.exe parse --image smoke.png --device gpu --repeat 2 2>&1"
           if ($LASTEXITCODE -ne 0) { Write-Error "parse --device gpu упал"; exit 1 }
+          $gpu | Select-String -Pattern "DirectML|Модели|Повтор|Проход" | Select-Object -First 4
+          if ("$gpu" -match "AzureExecutionProvider") { Write-Error "в exe попал onnxruntime без DirectML"; exit 1 }
           # Окно программы: открывается, грузит модели, распознаёт картинку и закрывается.
           dist\clickmimic\clickmimic.exe gui --smoke smoke.png
           if ($LASTEXITCODE -ne 0) { Write-Error "GUI не распознал картинку"; exit 1 }
