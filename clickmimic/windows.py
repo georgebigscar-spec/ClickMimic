@@ -168,9 +168,11 @@ def activate(hwnd: int) -> None:
     if user32.GetForegroundWindow() == hwnd:
         return
     # Windows не даёт фоновому процессу забирать фокус; нажатие Alt снимает это ограничение.
-    user32.keybd_event(0x12, 0, 0, 0)
+    from .input.sendinput import OWN_INPUT_MARK
+
+    user32.keybd_event(0x12, 0, 0, OWN_INPUT_MARK)
     user32.SetForegroundWindow(hwnd)
-    user32.keybd_event(0x12, 0, 2, 0)
+    user32.keybd_event(0x12, 0, 2, OWN_INPUT_MARK)
 
 
 def print_window(hwnd: int) -> Image.Image | None:

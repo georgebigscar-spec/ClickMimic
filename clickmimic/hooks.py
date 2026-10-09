@@ -2,7 +2,9 @@
 
 Хуки работают в отдельном потоке с собственным циклом сообщений. Обработчик должен возвращаться
 быстро (иначе Windows снимет хук), поэтому он только передаёт событие дальше. Нажатия, которые
-программа сама отправляет через SendInput (флаг injected), пропускаются.
+программа сама отправляет через SendInput, пропускаются по метке в dwExtraInfo. Флаг injected для
+этого не годится: через удалённый рабочий стол, виртуальную машину или программы для мыши
+Windows помечает так и настоящий ввод пользователя.
 """
 from __future__ import annotations
 
@@ -12,6 +14,8 @@ import os
 import threading
 from ctypes import wintypes
 from typing import Callable
+
+from .input.sendinput import OWN_INPUT_MARK
 
 log = logging.getLogger("clickmimic")
 
@@ -119,10 +123,10 @@ class InputHooks:
     """on_mouse(button, x, y), on_wheel(x, y, delta), on_key(name, char, mods)."""
 
     def __init__(self, on_mouse: Callable, on_wheel: Callable, on_key: Callable,
-                 key_filter: Callable[[], bool] = lambda: True, skip_injected: bool = True):
+                 key_filter: Callable[[], bool] = lambda: True, skip_own: bool = True):
         self.on_mouse, self.on_wheel, self.on_key = on_mouse, on_wheel, on_key
         self.key_filter = key_filter  # False = нажатие не для записи (например, фокус в окне программы)
-        self.skip_injected = skip_injected  # False только в тестах: там ввод идёт через SendInput
+        self.skip_own = skip_own  # False только в тестах: там «пользователь» кликает через наш SendInput
         self.received = 0  # сколько нажатий дошло до хуков (для диагностики)
         self._thread: threading.Thread | None = None
         self._thread_id = 0
@@ -145,7 +149,7 @@ class InputHooks:
     def _mouse_proc(self, code, wparam, lparam):
         if code == 0:
             info = ctypes.cast(lparam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
-            if not (self.skip_injected and info.flags & LLMHF_INJECTED):
+            if not (self.skip_own and info.dwExtraInfo == OWN_INPUT_MARK):
                 try:
                     if wparam == WM_MOUSEWHEEL:
                         delta = ctypes.c_short(info.mouseData >> 16).value
@@ -161,7 +165,7 @@ class InputHooks:
     def _key_proc(self, code, wparam, lparam):
         if code == 0 and wparam in (WM_KEYDOWN, WM_SYSKEYDOWN):
             info = ctypes.cast(lparam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
-            if not (self.skip_injected and info.flags & LLKHF_INJECTED) and info.vkCode not in MODIFIERS:
+            if not (self.skip_own and info.dwExtraInfo == OWN_INPUT_MARK) and info.vkCode not in MODIFIERS:
                 try:
                     name = KEY_NAMES.get(info.vkCode)
                     if name == "pause" or self.key_filter():

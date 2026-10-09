@@ -46,7 +46,7 @@ def test_hooks_receive_real_events():
     from clickmimic.hooks import InputHooks
 
     mouse, keys = [], []
-    h = InputHooks(lambda *a: mouse.append(a), lambda *a: None, lambda *a: keys.append(a), skip_injected=False)
+    h = InputHooks(lambda *a: mouse.append(a), lambda *a: None, lambda *a: keys.append(a), skip_own=False)
     h.start()
     try:
         backend = _send_click(200, 200)
@@ -72,7 +72,7 @@ def test_recorder_with_real_hooks_counts_steps():
 
     rec = Recorder(Source(monitor=1), Det(), lambda: (Image.new("RGB", (800, 600)), (0, 0)),
                    region=lambda: (0, 0, 800, 600))
-    h = InputHooks(rec.on_mouse, rec.on_wheel, rec.on_key, skip_injected=False)
+    h = InputHooks(rec.on_mouse, rec.on_wheel, rec.on_key, skip_own=False)
     h.start()
     try:
         _send_click(200, 200)
@@ -105,7 +105,7 @@ def test_gui_recording_with_real_hooks(tmp_path):
     root = tk.Tk()
     try:
         app = App(root, GuiSettings(), Det, save_settings=False)
-        app.hooks_factory = lambda r: InputHooks(r.on_mouse, r.on_wheel, r.on_key, skip_injected=False)
+        app.hooks_factory = lambda r: InputHooks(r.on_mouse, r.on_wheel, r.on_key, skip_own=False)
         end = time.monotonic() + 10
         while app.detector is None and time.monotonic() < end:
             root.update()
@@ -146,3 +146,28 @@ def test_runs_as_admin_for_own_and_shell_window():
     shell = ctypes.windll.user32.GetShellWindow()
     if shell:
         assert isinstance(windows.runs_as_admin(shell), bool)
+
+
+def test_foreign_injected_input_is_recorded_own_is_skipped():
+    """Через RDP/виртуальную машину настоящий ввод приходит с флагом injected: его надо записывать.
+    Пропускается только ввод самой программы (метка в dwExtraInfo)."""
+
+    from clickmimic.hooks import InputHooks
+    from clickmimic.input import sendinput as si
+
+    mouse = []
+    h = InputHooks(lambda *a: mouse.append(a), lambda *a: None, lambda *a: None)
+    h.start()
+    try:
+        si.SendInputBackend().move(300, 300, 0)
+        own = [si._mouse(si.MOUSEEVENTF_LEFTDOWN), si._mouse(si.MOUSEEVENTF_LEFTUP)]
+        si._send(*own)
+        assert not _pump_until(lambda: mouse, 1.0), "свой клик не должен записываться"
+        foreign = [si._mouse(si.MOUSEEVENTF_LEFTDOWN), si._mouse(si.MOUSEEVENTF_LEFTUP)]
+        for i in foreign:
+            i.mi.dwExtraInfo = 0
+        si._send(*foreign)
+        assert _pump_until(lambda: mouse), "чужой injected-клик не записан"
+    finally:
+        h.stop()
+    assert mouse[0][0] == "left"
