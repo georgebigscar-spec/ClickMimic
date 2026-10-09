@@ -344,7 +344,9 @@ class Recorder:
                 return
             try:
                 x, y = rec.x - rec.offset[0], rec.y - rec.offset[1]
+                t0 = time.perf_counter()
                 rec.spec = target_for_click(self.elements_near(rec.image, x, y), x, y)
+                log.info("Запись: клик распознан за %.0f мс: %s", (time.perf_counter() - t0) * 1000, rec.spec)
             except Exception:
                 log.exception("Не удалось распознать кадр клика")
             finally:
