@@ -138,3 +138,44 @@ def test_gui_runs_script_dry(tk_root, tmp_path):
     log = app.log_text.get("1.0", "end")
     assert "найден #0" in log and "Готово" in log
     app.close()
+
+
+def test_gui_records_actions_into_script(tk_root, tmp_path, monkeypatch):
+    from clickmimic import gui
+    from clickmimic.gui import App, RecordSession
+
+    class FakeHooks:
+        def __init__(self, recorder):
+            self.recorder = recorder
+            self.running = False
+
+        def start(self):
+            self.running = True
+
+        def stop(self):
+            self.running = False
+
+    monkeypatch.setattr(gui.capture, "grab", lambda monitor=1, region=None: (Image.new("RGB", (400, 200)), (0, 0)))
+    monkeypatch.setattr(RecordSession, "_region", lambda self: (0, 0, 400, 200))
+    app = App(tk_root, GuiSettings(), FakeDetector, save_settings=False)
+    app.hooks_factory = FakeHooks
+    pump(tk_root, lambda: app.detector is not None)
+    app.source_box.current(0)  # монитор
+
+    app.start_recording()
+    session = app.recording
+    assert session is not None and session.hooks.running
+    rec = session.recorder
+    rec.on_mouse("left", 30, 20)  # «Файл»
+    for ch in "ok":
+        rec.on_key(ch, ch, set())
+    rec.on_key("pause", None, set())  # клавиша остановки
+    pump(tk_root, lambda: app.recording is None)
+
+    assert not session.hooks.running
+    yaml_text = app.editor.text.get("1.0", "end-1c")
+    assert "- click: {text: Файл}" in yaml_text and "- type: ok" in yaml_text
+    path = tmp_path / "rec.yaml"
+    assert app.editor.save(path=str(path))
+    assert app.script_var.get() == str(path) and path.read_text("utf-8") == yaml_text
+    app.close()

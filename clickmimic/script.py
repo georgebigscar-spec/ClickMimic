@@ -92,7 +92,7 @@ def _parse_step(raw: dict | str, n: int) -> Step:
     if action == "scroll":
         spec = value if isinstance(value, dict) else {"amount": value}
         amount = int(spec.pop("amount", -3))
-        target = Target.from_spec(spec) if any(k in spec for k in ("text", "id", "at")) else None
+        target = Target.from_spec(spec) if any(k in spec for k in ("text", "id", "at", "rel")) else None
         return Step(action, target, {"amount": amount}, optional, n)
     if action == "type":
         return Step(action, None, {"text": str(value), **extra}, optional, n)
@@ -107,8 +107,9 @@ def _parse_step(raw: dict | str, n: int) -> Step:
 
 
 def load(source: str | Path, variables: dict[str, str] | None = None) -> Script:
-    path = Path(source)
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else yaml.safe_load(str(source))
+    is_text = isinstance(source, str) and "\n" in source  # текст сценария, а не путь к файлу
+    path = Path("script.yaml" if is_text else source)
+    data = yaml.safe_load(str(source)) if is_text or not path.exists() else yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict) or "steps" not in data:
         raise ValueError("Сценарий должен быть YAML-словарём с ключом steps")
     data = _substitute(data, variables or {})

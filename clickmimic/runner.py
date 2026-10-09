@@ -85,6 +85,9 @@ class Runner:
     def _resolve_point(self, step: Step) -> tuple[int, int]:
         if step.target.at:
             return step.target.at
+        if step.target.rel:
+            _, (ox, oy) = self.grab()  # где сейчас окно; распознавание не нужно
+            return ox + step.target.rel[0], oy + step.target.rel[1]
         el = self._wait(step, present=True)
         log.info("  найден #%d %s %r @ %s", el.id, el.kind, el.content, el.bbox.center)
         return point_for(el, step.target)
