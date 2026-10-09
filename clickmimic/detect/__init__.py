@@ -9,5 +9,8 @@ from ..elements import UIElement
 
 class Detector(Protocol):
     def parse(self, image: Image.Image) -> list[UIElement]:
-        """Найти элементы на изображении; координаты относительно изображения."""
+        """Найти элементы на изображении; координаты относительно изображения.
+
+        OmniParser дополнительно принимает icons=False, чтобы пропустить поиск областей YOLO.
+        """
         ...

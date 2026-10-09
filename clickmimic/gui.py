@@ -37,6 +37,7 @@ class GuiSettings:
     imgsz: int = 1280
     box_threshold: float = 0.05
     ocr_min_score: float = 0.5
+    device: str = "cpu"  # "cpu" или "gpu" (DirectML)
     live_interval: float = 0.5
     show_ids: bool = True
     activate_window: bool = False
@@ -102,7 +103,8 @@ def step_for(e: UIElement, offset: tuple[int, int]) -> str:
 def default_detector_factory(s: GuiSettings):
     from .detect.omniparser import OmniParser, OmniParserConfig
 
-    return OmniParser(OmniParserConfig(box_threshold=s.box_threshold, imgsz=s.imgsz, ocr_min_score=s.ocr_min_score))
+    return OmniParser(OmniParserConfig(box_threshold=s.box_threshold, imgsz=s.imgsz, ocr_min_score=s.ocr_min_score,
+                                       device=s.device))
 
 
 class QueueLogHandler(logging.Handler):
@@ -396,7 +398,10 @@ class App:
                 elif kind == "detector":
                     self.detector = ev[1]
                     self.parse_btn.state(["!disabled"])
-                    self.status.set(f"Модели загружены за {ev[2] * 1000:.0f} мс. F5 — распознать.")
+                    device = "видеокарта" if getattr(self.detector, "device", "cpu") == "gpu" else "процессор"
+                    if self.s.device == "gpu" and device == "процессор":
+                        device += " (видеокарта с DirectML не найдена)"
+                    self.status.set(f"Модели загружены за {ev[2] * 1000:.0f} мс, устройство: {device}. F5 — распознать.")
                     if self.on_result is not None and self.image_item is not None:
                         self.parse_once()
                 elif kind == "error":
@@ -639,7 +644,8 @@ class App:
         SettingsDialog(self)
 
     def apply_settings(self, new: GuiSettings) -> None:
-        reload = (new.imgsz, new.box_threshold, new.ocr_min_score) != (self.s.imgsz, self.s.box_threshold, self.s.ocr_min_score)
+        model_keys = ("imgsz", "box_threshold", "ocr_min_score", "device")
+        reload = any(getattr(new, k) != getattr(self.s, k) for k in model_keys)
         self.s = new
         self._persist()
         self._render()
@@ -685,11 +691,15 @@ class SettingsDialog:
         self.box = tk.StringVar(value=str(s.box_threshold))
         self.ocr = tk.StringVar(value=str(s.ocr_min_score))
         self.interval = tk.StringVar(value=str(s.live_interval))
+        self.devices = {"Процессор": "cpu", "Видеокарта (DirectML)": "gpu"}
+        self.device = tk.StringVar(value=next((k for k, v in self.devices.items() if v == s.device), "Процессор"))
         self.show_ids = tk.BooleanVar(value=s.show_ids)
         self.activate = tk.BooleanVar(value=s.activate_window)
         self.minimize = tk.BooleanVar(value=s.minimize_during_run)
 
         rows = [
+            ("Устройство", ttk.Combobox(frm, textvariable=self.device, values=list(self.devices), state="readonly", width=22),
+             "видеокарта ускоряет YOLO; без неё работает процессор"),
             ("Размер входа YOLO", ttk.Combobox(frm, textvariable=self.imgsz, values=["640", "960", "1280", "1600"], width=8),
              "меньше — быстрее, но мелкие иконки теряются"),
             ("Порог уверенности YOLO", ttk.Spinbox(frm, textvariable=self.box, from_=0.01, to=0.9, increment=0.01, width=8),
@@ -726,6 +736,7 @@ class SettingsDialog:
             new = GuiSettings(**{
                 **asdict(self.app.s),
                 "imgsz": int(self.imgsz.get()),
+                "device": self.devices[self.device.get()],
                 "box_threshold": float(self.box.get().replace(",", ".")),
                 "ocr_min_score": float(self.ocr.get().replace(",", ".")),
                 "live_interval": float(self.interval.get().replace(",", ".")),

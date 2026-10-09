@@ -10,10 +10,19 @@ from ..elements import BBox
 
 
 class IconDetector:
-    def __init__(self, model_path: Path, imgsz: int = 1280, conf: float = 0.05, iou: float = 0.1):
+    def __init__(self, model_path: Path, imgsz: int = 1280, conf: float = 0.05, iou: float = 0.1,
+                 providers: list[str] | None = None):
         import onnxruntime as ort
 
-        self.session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
+        opts = ort.SessionOptions()
+        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        providers = providers or ["CPUExecutionProvider"]
+        if "DmlExecutionProvider" in providers:
+            # Требования DirectML: без mem pattern и с последовательным выполнением.
+            opts.enable_mem_pattern = False
+            opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        self.session = ort.InferenceSession(str(model_path), opts, providers=providers)
+        self.device = "gpu" if self.session.get_providers()[0] == "DmlExecutionProvider" else "cpu"
         self.input_name = self.session.get_inputs()[0].name
         self.imgsz = imgsz
         self.conf = conf
@@ -21,7 +30,9 @@ class IconDetector:
 
     def _letterbox(self, rgb: np.ndarray) -> tuple[np.ndarray, float, tuple[int, int]]:
         h, w = rgb.shape[:2]
-        scale = self.imgsz / max(h, w)
+        # Маленькое окно не растягиваем до imgsz: это только тратит время, мелочи от этого не проявятся.
+        size = min(self.imgsz, -(-max(h, w) // 32) * 32)
+        scale = size / max(h, w)
         nh, nw = round(h * scale), round(w * scale)
         resized = cv2.resize(rgb, (nw, nh), interpolation=cv2.INTER_LINEAR)
         # Добиваем до кратного 32 (модель экспортирована с динамическим размером входа).

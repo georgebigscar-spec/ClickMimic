@@ -5,6 +5,7 @@
     python packaging/build_exe.py build/models
 Результат: dist/clickmimic/clickmimic.exe и dist/clickmimic/models (ONNX-модели внутри сборки).
 """
+import importlib.metadata
 import shutil
 import sys
 from pathlib import Path
@@ -22,7 +23,15 @@ COLLECT_ALL = ["clickmimic", "rapidocr", "certifi"]
 # Подготовка моделей ставит torch/ultralytics в то же окружение; в exe они не нужны.
 EXCLUDE = ["torch", "torchvision", "ultralytics", "paddle", "openvino", "tensorrt", "MNN",
            "easyocr", "matplotlib", "pandas", "scipy", "IPython"]
-METADATA = ["rapidocr", "onnxruntime", "numpy", "pyyaml", "pillow", "requests", "tqdm"]
+METADATA = ["rapidocr", "numpy", "pyyaml", "pillow", "requests", "tqdm"]
+# onnxruntime стоит либо обычный, либо с DirectML (тот же модуль, другое имя пакета).
+for dist in ("onnxruntime-directml", "onnxruntime"):
+    try:
+        importlib.metadata.version(dist)
+    except importlib.metadata.PackageNotFoundError:
+        continue
+    METADATA.append(dist)
+    break
 
 args = [
     str(ROOT / "packaging" / "launcher.py"),

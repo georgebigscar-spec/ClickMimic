@@ -28,3 +28,16 @@ def require(path: Path) -> Path:
             f"Не найдена модель {path}. Подготовьте модели: python packaging/prepare_models.py"
         )
     return path
+
+
+def providers(device: str) -> list[str]:
+    """Провайдеры onnxruntime для устройства: "cpu", "gpu" (DirectML) или "auto".
+
+    DirectML работает на любой видеокарте с DirectX 12 (NVIDIA, AMD, Intel), но есть только
+    в сборке onnxruntime-directml; без неё или без видеокарты остаётся процессор.
+    """
+    import onnxruntime as ort
+
+    if device != "cpu" and "DmlExecutionProvider" in ort.get_available_providers():
+        return ["DmlExecutionProvider", "CPUExecutionProvider"]
+    return ["CPUExecutionProvider"]

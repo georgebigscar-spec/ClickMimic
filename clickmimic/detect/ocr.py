@@ -28,7 +28,7 @@ OCR_PARAMS = {
 }
 
 
-def build_engine(model_root: Path):
+def build_engine(model_root: Path, gpu: bool = False):
     from rapidocr import LangDet, LangRec, ModelType, OCRVersion, RapidOCR
 
     params = dict(OCR_PARAMS)
@@ -39,6 +39,8 @@ def build_engine(model_root: Path):
     params["Det.model_type"] = ModelType(params["Det.model_type"])
     params["Rec.model_type"] = ModelType(params["Rec.model_type"])
     params["Global.model_root_dir"] = str(model_root)
+    if gpu:
+        params["EngineConfig.onnxruntime.use_dml"] = True
     engine = RapidOCR(params=params)
     # С rapidocr 3.10 модели загружаются лениво, при первом полном вызове движка, а text_det и
     # text_rec до этого равны None. Мы зовём их напрямую, поэтому загружаем модели сразу
@@ -50,11 +52,11 @@ def build_engine(model_root: Path):
 
 
 class TextReader:
-    def __init__(self, model_root: Path, min_score: float = 0.5, cache_size: int = 5000):
+    def __init__(self, model_root: Path, min_score: float = 0.5, cache_size: int = 5000, gpu: bool = False):
         from rapidocr.ch_ppocr_rec import TextRecInput
 
         self._rec_input = TextRecInput
-        self.engine = build_engine(model_root)
+        self.engine = build_engine(model_root, gpu)
         self.min_score = min_score
         self.cache: OrderedDict[bytes, tuple[str, float]] = OrderedDict()
         self.cache_size = cache_size

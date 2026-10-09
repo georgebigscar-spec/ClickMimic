@@ -77,3 +77,70 @@ def test_ocr_cache_skips_unchanged_lines():
     img[55:65, 20:80] = 200  # изменилась только вторая строка
     reader.read(img)
     assert reader.engine.rec_calls == [2, 1]
+
+
+def test_yolo_does_not_upscale_small_windows():
+    def raw(blob):
+        assert blob.shape == (1, 3, 224, 320)  # 300x200 -> 320x213, добито до кратного 32
+        return np.zeros((1, 5, 0), np.float32)
+
+    assert make_detector(raw).detect(np.zeros((200, 300, 3), np.uint8)) == []
+
+
+def make_parser(texts, boxes):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from clickmimic.detect.omniparser import OmniParser, OmniParserConfig
+
+    p = OmniParser.__new__(OmniParser)
+    p.cfg = OmniParserConfig()
+    calls = {"yolo": 0, "ocr": 0}
+
+    def detect(rgb):
+        calls["yolo"] += 1
+        return boxes
+
+    def read(rgb):
+        calls["ocr"] += 1
+        return texts
+
+    p.icons = SimpleNamespace(detect=detect)
+    p.ocr = SimpleNamespace(read=read, last_stats={"ocr_det": 0.0, "ocr_rec": 0.0, "lines": 1, "lines_recognized": 1})
+    p._pool = ThreadPoolExecutor(max_workers=1)
+    p._last = None
+    return p, calls
+
+
+def test_parser_skips_models_for_unchanged_frame_and_yolo_on_request():
+    from PIL import Image
+
+    from clickmimic.detect.omniparser import format_timings
+    from clickmimic.elements import BBox
+
+    texts = [(BBox(10, 10, 50, 30), "OK", 0.9)]
+    boxes = [(BBox(5, 5, 60, 35), 0.8)]
+    p, calls = make_parser(texts, boxes)
+    img = Image.new("RGB", (100, 50), "white")
+
+    full = p.parse(img)
+    assert calls == {"yolo": 1, "ocr": 1}
+    assert [(e.kind, e.content) for e in full] == [("icon", "OK")]
+
+    again = p.parse(img)  # тот же кадр: модели не запускаются
+    assert calls == {"yolo": 1, "ocr": 1}
+    assert "кадр не изменился" in format_timings(p.last_timings)
+    assert [(e.kind, e.content) for e in again] == [("icon", "OK")]
+    again[0].bbox = again[0].bbox.offset(100, 100)  # изменения копии не портят кэш
+    assert p.parse(img)[0].bbox == BBox(5, 5, 60, 35)
+
+    other = Image.new("RGB", (100, 50), "black")
+    text_only = p.parse(other, icons=False)
+    assert calls == {"yolo": 1, "ocr": 2}
+    assert [(e.kind, e.content) for e in text_only] == [("text", "OK")]
+    assert "YOLO пропущен" in format_timings(p.last_timings)
+    p.parse(other)  # кадр тот же, но теперь нужны области YOLO
+    assert calls == {"yolo": 2, "ocr": 3}
+
+    p.forget_frame()
+    p.parse(other)
+    assert calls == {"yolo": 3, "ocr": 4}
