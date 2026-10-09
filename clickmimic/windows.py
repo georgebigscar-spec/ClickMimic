@@ -141,6 +141,10 @@ def find_window(title: str, process: str | None = None) -> Window | None:
     return None
 
 
+def title(hwnd: int) -> str:
+    return _title(hwnd) if sys.platform == "win32" else ""
+
+
 def exists(hwnd: int) -> bool:
     return sys.platform == "win32" and bool(user32.IsWindow(hwnd))
 
@@ -164,9 +168,11 @@ def activate(hwnd: int) -> None:
     if user32.GetForegroundWindow() == hwnd:
         return
     # Windows не даёт фоновому процессу забирать фокус; нажатие Alt снимает это ограничение.
-    user32.keybd_event(0x12, 0, 0, 0)
+    from .input.sendinput import OWN_INPUT_MARK
+
+    user32.keybd_event(0x12, 0, 0, OWN_INPUT_MARK)
     user32.SetForegroundWindow(hwnd)
-    user32.keybd_event(0x12, 0, 2, 0)
+    user32.keybd_event(0x12, 0, 2, OWN_INPUT_MARK)
 
 
 def print_window(hwnd: int) -> Image.Image | None:
@@ -205,3 +211,42 @@ def print_window(hwnd: int) -> Image.Image | None:
     left, top, vw, vh = rect(hwnd)
     dx, dy = left - wr.left, top - wr.top
     return img.crop((dx, dy, dx + vw, dy + vh))
+
+
+def _process_elevated(handle) -> bool | None:
+    advapi32 = ctypes.WinDLL("advapi32")
+    advapi32.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+    advapi32.GetTokenInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
+                                             ctypes.POINTER(wintypes.DWORD)]
+    token = wintypes.HANDLE()
+    if not advapi32.OpenProcessToken(handle, 0x0008, ctypes.byref(token)):  # TOKEN_QUERY
+        return None
+    try:
+        value, size = wintypes.DWORD(), wintypes.DWORD()
+        if not advapi32.GetTokenInformation(token, 20, ctypes.byref(value), 4, ctypes.byref(size)):  # TokenElevation
+            return None
+        return bool(value.value)
+    finally:
+        kernel32.CloseHandle(token)
+
+
+def runs_as_admin(hwnd: int | None = None) -> bool:
+    """Запущен ли процесс окна (или эта программа, если hwnd не задан) от администратора.
+
+    Если права процесса окна узнать нельзя, значит, он выше наших: считаем, что от администратора.
+    """
+    if sys.platform != "win32":
+        return False
+    if hwnd is None:
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        return bool(_process_elevated(kernel32.GetCurrentProcess()))
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+    if not handle:
+        return True
+    try:
+        elevated = _process_elevated(handle)
+        return True if elevated is None else elevated
+    finally:
+        kernel32.CloseHandle(handle)

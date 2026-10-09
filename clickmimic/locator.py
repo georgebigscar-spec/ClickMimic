@@ -21,13 +21,14 @@ class Target:
     offset: tuple[int, int] = (0, 0)
     at: tuple[int, int] | None = None  # абсолютные координаты, без распознавания
     rel: tuple[int, int] | None = None  # координаты внутри окна/монитора сценария, без распознавания
+    near: tuple[int, int] | None = None  # из нескольких одинаковых совпадений берётся ближайшее к точке в окне
 
     @classmethod
     def from_spec(cls, spec: dict | str) -> "Target":
         if isinstance(spec, str):
             return cls(text=spec)
         known = {k: v for k, v in spec.items() if k in cls.__dataclass_fields__}
-        for key in ("region", "offset", "at", "rel"):
+        for key in ("region", "offset", "at", "rel", "near"):
             if known.get(key) is not None:
                 known[key] = tuple(known[key])
         return cls(**known)
@@ -58,7 +59,8 @@ def score(query: str, content: str, exact: bool) -> float:
     return float(fuzz.ratio(q, c))
 
 
-def find(elements: list[UIElement], target: Target) -> UIElement | None:
+def find(elements: list[UIElement], target: Target, origin: tuple[int, int] = (0, 0)) -> UIElement | None:
+    """origin — экранные координаты левого верхнего угла окна сценария (для near)."""
     candidates = elements
     if target.region:
         l, t, w, h = target.region
@@ -77,6 +79,16 @@ def find(elements: list[UIElement], target: Target) -> UIElement | None:
         # Лучшие совпадения первыми; при равенстве — порядок чтения (id).
         best = {e.id: s for s, e in scored}
         matches.sort(key=lambda e: (-best[e.id], e.id))
+        if target.near and not target.index and len(matches) > 1:
+            # Одинаковые надписи: та, что ближе к месту, где кликнули при записи.
+            nx, ny = origin[0] + target.near[0], origin[1] + target.near[1]
+            top = best[matches[0].id]
+
+            def dist(e: UIElement) -> float:
+                cx, cy = e.bbox.center
+                return (cx - nx) ** 2 + (cy - ny) ** 2
+
+            return min((e for e in matches if best[e.id] == top), key=dist)
     return matches[target.index] if len(matches) > target.index else None
 
 

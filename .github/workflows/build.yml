@@ -87,6 +87,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { Write-Error "parse --device gpu упал"; exit 1 }
           $gpu | Select-String -Pattern "DirectML|Модели|Повтор|Проход" | Select-Object -First 4
           if ("$gpu" -match "AzureExecutionProvider") { Write-Error "в exe попал onnxruntime без DirectML"; exit 1 }
+          # Хуки записи ставятся и снимаются в собранном exe.
+          dist\clickmimic\clickmimic.exe hooks-test --seconds 1
+          if ($LASTEXITCODE -ne 0) { Write-Error "hooks-test упал"; exit 1 }
           # Окно программы: открывается, грузит модели, распознаёт картинку и закрывается.
           dist\clickmimic\clickmimic.exe gui --smoke smoke.png
           if ($LASTEXITCODE -ne 0) { Write-Error "GUI не распознал картинку"; exit 1 }
@@ -99,6 +102,11 @@ jobs:
           Write-Host $texts
           if ($els.Count -lt 1) { Write-Error "Модель ничего не нашла"; exit 1 }
           if ($texts -notmatch "Отмена") { Write-Error "OCR не распознал кириллицу"; exit 1 }
+
+      - name: Recording speed (full frame vs strip around the click)
+        env:
+          PYTHONUTF8: "1"
+        run: python packaging/record_speed.py build/models smoke.png
 
       - name: Zip
         shell: pwsh

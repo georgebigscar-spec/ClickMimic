@@ -530,7 +530,7 @@ class App:
             from .input import get_backend
 
             try:
-                if item.source.window and not dry:
+                if item.source.is_window and not dry:
                     from . import windows
 
                     windows.activate(capture.resolve_window(item.source))
@@ -590,7 +590,7 @@ class App:
             messagebox.showerror("Сценарий", f"Не удалось загрузить сценарий:\n{exc}")
             return
         item = self.current_item()
-        if sc.settings.window:
+        if sc.settings.window or sc.settings.process:
             source = Source(sc.settings.monitor, sc.settings.window, sc.settings.process)
         elif item.source is not None:
             source = Source(**{**asdict(item.source)})
@@ -602,7 +602,7 @@ class App:
         self.run_btn.state(["disabled"])
         self.parse_btn.state(["disabled"])
         self.stop_btn.state(["!disabled"])
-        minimize = self.s.minimize_during_run and not source.window and not self.dry_var.get()
+        minimize = self.s.minimize_during_run and not source.is_window and not self.dry_var.get()
         if minimize:
             self.root.iconify()
         log.info("Запуск: %s, %s%s", sc.name, source.describe(), " (без нажатий)" if self.dry_var.get() else "")
@@ -724,7 +724,8 @@ class RecordSession:
 
         self.app = app
         self.source = source
-        self.hwnd = capture.resolve_window(source) if source.window else None
+        self.hwnd = capture.resolve_window(source) if source.is_window else None
+        self.title_changed = False
         self.started = time.monotonic()
         self.finishing = False
         self.panel_rect = (0, 0, 0, 0)
@@ -741,7 +742,7 @@ class RecordSession:
         frm = ttk.Frame(top, padding=(8, 4))
         frm.pack()
         self.label = tk.StringVar(value="● Запись 00:00")
-        ttk.Label(frm, textvariable=self.label, foreground="#d22", width=34).pack(side="left")
+        ttk.Label(frm, textvariable=self.label, foreground="#d22", width=44).pack(side="left")
         self.pause_btn = ttk.Button(frm, text="Пауза", command=self.toggle_pause)
         self.pause_btn.pack(side="left", padx=4)
         ttk.Button(frm, text="■ Стоп", command=self.finish).pack(side="left")
@@ -749,10 +750,27 @@ class RecordSession:
         top.geometry(f"+{max(0, (top.winfo_screenwidth() - top.winfo_width()) // 2)}+8")
 
         self.hooks.start()
+        self._warn_admin()
         app.root.iconify()
         self._focus_target()
         top.after(200, self._tick)
         log.info("Запись: %s. Остановить: «Стоп» на панели или клавиша Pause.", source.describe())
+
+    def _warn_admin(self) -> None:
+        from . import windows
+
+        try:
+            blocked = self.hwnd and windows.runs_as_admin(self.hwnd) and not windows.runs_as_admin()
+        except Exception:
+            return
+        if blocked:
+            from tkinter import messagebox
+
+            log.warning("Окно запущено от имени администратора, а ClickMimic нет")
+            messagebox.showwarning(
+                "Запись", "Это окно запущено от имени администратора. Windows не передаёт его клики и нажатия "
+                "программам с обычными правами, поэтому шаги не запишутся и сценарий не сможет кликать.\n\n"
+                "Запустите ClickMimic от имени администратора (правый клик по clickmimic.exe).", parent=self.top)
 
     # --- снимки и область записи (вызываются из потоков записи) ---
 
@@ -760,6 +778,10 @@ class RecordSession:
         from . import windows
 
         if self.hwnd:
+            src = self.source
+            if src.window and src.process and not self.title_changed:
+                # Проводник и браузеры меняют заголовок при переходах: тогда искать окно по нему нельзя.
+                self.title_changed = src.window.casefold() not in windows.title(self.hwnd).casefold()
             return windows.rect(self.hwnd)
         try:
             import mss
@@ -808,7 +830,9 @@ class RecordSession:
                 self.finish()
             secs = int(time.monotonic() - self.started)
             state = "⏸ Пауза" if rec.paused else "● Запись"
-            extra = f", вне окна: {rec.ignored}" if rec.ignored else ""
+            clicks = getattr(self.hooks, "received", None)
+            extra = f"  кликов: {clicks}" if clicks is not None else ""
+            extra += f", вне окна: {rec.ignored}" if rec.ignored else ""
             self.label.set(f"{state} {secs // 60:02d}:{secs % 60:02d}  шагов: {rec.actions}{extra}")
         t.after(200, self._tick)
 
@@ -829,9 +853,14 @@ class RecordSession:
 
     def _done(self) -> None:
         self.recorder.wait(5)
+        if self.title_changed:
+            log.info("Заголовок окна менялся во время записи: сценарий будет искать окно по процессу %s",
+                     self.source.process)
+            self.recorder.builder.source = Source(self.source.monitor, "", self.source.process)
         text = self.recorder.builder.to_yaml()
         self.top.destroy()
-        log.info("Запись остановлена: %d шагов", len(self.recorder.builder.steps()))
+        log.info("Запись остановлена: %d шагов (кликов поймано: %s, вне окна: %d)", len(self.recorder.builder.steps()),
+                 getattr(self.hooks, "received", "?"), self.recorder.ignored)
         self.app._recording_done(text)
 
     def abort(self) -> None:

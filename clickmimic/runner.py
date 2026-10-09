@@ -39,6 +39,7 @@ class Runner:
         self.sleep = sleep
         self.clock = clock
         self.last_image: Image.Image | None = None
+        self.origin = (0, 0)
         self.stop = stop or (lambda: False)
         self._partial = "icons" in inspect.signature(detector.parse).parameters
 
@@ -49,6 +50,7 @@ class Runner:
         """
         image, (ox, oy) = self.grab()
         self.last_image = image
+        self.origin = (ox, oy)
         if self._partial:
             elements = self.detector.parse(image, icons=icons)
         else:
@@ -73,7 +75,7 @@ class Runner:
         deadline = self.clock() + float(step.args.get("timeout", self.s.timeout))
         while True:
             t = step.target
-            el = find(self.snapshot(icons=t.id is not None or t.interactable is not None), t)
+            el = find(self.snapshot(icons=t.id is not None or t.interactable is not None), t, self.origin)
             if (el is not None) == present:
                 return el
             if self.clock() >= deadline:

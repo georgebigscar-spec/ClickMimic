@@ -17,6 +17,8 @@ MOUSEEVENTF_WHEEL = 0x0800
 WHEEL_DELTA = 120
 
 ULONG_PTR = ctypes.c_size_t
+# Метка в dwExtraInfo: по ней запись (hooks.py) отличает ввод самой программы от пользовательского.
+OWN_INPUT_MARK = 0x434D494D  # "CMIM"
 
 
 class MOUSEINPUT(ctypes.Structure):
@@ -62,13 +64,13 @@ def _send(*inputs: INPUT) -> None:
 
 def _key(vk: int = 0, scan: int = 0, flags: int = 0) -> INPUT:
     i = INPUT(type=INPUT_KEYBOARD)
-    i.ki = KEYBDINPUT(vk, scan, flags, 0, 0)
+    i.ki = KEYBDINPUT(vk, scan, flags, 0, OWN_INPUT_MARK)
     return i
 
 
 def _mouse(flags: int, data: int = 0) -> INPUT:
     i = INPUT(type=INPUT_MOUSE)
-    i.mi = MOUSEINPUT(0, 0, ctypes.c_ulong(data & 0xFFFFFFFF).value, flags, 0, 0)
+    i.mi = MOUSEINPUT(0, 0, ctypes.c_ulong(data & 0xFFFFFFFF).value, flags, 0, OWN_INPUT_MARK)
     return i
 
 
