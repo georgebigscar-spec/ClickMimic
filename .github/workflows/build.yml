@@ -100,6 +100,11 @@ jobs:
           if ($els.Count -lt 1) { Write-Error "Модель ничего не нашла"; exit 1 }
           if ($texts -notmatch "Отмена") { Write-Error "OCR не распознал кириллицу"; exit 1 }
 
+      - name: Recording speed (full frame vs strip around the click)
+        env:
+          PYTHONUTF8: "1"
+        run: python packaging/record_speed.py build/models smoke.png
+
       - name: Zip
         shell: pwsh
         run: Compress-Archive -Path dist\clickmimic -DestinationPath clickmimic-windows-x64.zip -CompressionLevel Optimal

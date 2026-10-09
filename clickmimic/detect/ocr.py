@@ -53,12 +53,13 @@ def build_engine(model_root: Path, gpu: bool = False):
 
 
 class TextReader:
+    _lock = threading.Lock()
+
     def __init__(self, model_root: Path, min_score: float = 0.5, cache_size: int = 5000, gpu: bool = False):
         from rapidocr.ch_ppocr_rec import TextRecInput
 
         self._rec_input = TextRecInput
         self.engine = build_engine(model_root, gpu)
-        self._lock = threading.Lock()
         self.min_score = min_score
         self.cache: OrderedDict[bytes, tuple[str, float]] = OrderedDict()
         self.cache_size = cache_size
@@ -69,15 +70,17 @@ class TextReader:
         пока меньшая сторона не станет 736 px: для небольшого фрагмента экрана это лишняя работа."""
         bgr = np.ascontiguousarray(rgb[:, :, ::-1])
         t0 = time.perf_counter()
-        with self._lock:
-            det_model = self.engine.text_det
-            saved = det_model.limit_type, det_model.limit_side_len
-            if not upscale:
-                det_model.limit_type, det_model.limit_side_len = "max", 4096
-            try:
+        det_model = self.engine.text_det
+        with self._lock:  # масштаб задаётся в общей модели: параллельный вызов не должен его увидеть
+            if upscale:
                 det = det_model(bgr)
-            finally:
-                det_model.limit_type, det_model.limit_side_len = saved
+            else:
+                saved = det_model.limit_type, det_model.limit_side_len
+                det_model.limit_type, det_model.limit_side_len = "max", 4096
+                try:
+                    det = det_model(bgr)
+                finally:
+                    det_model.limit_type, det_model.limit_side_len = saved
         t1 = time.perf_counter()
         quads = det.boxes if det.boxes is not None else []
 
