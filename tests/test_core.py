@@ -115,3 +115,27 @@ def test_use_system_certs_does_not_raise():
 
     use_system_certs()
     ssl.create_default_context()
+
+
+def test_runner_skips_yolo_for_text_only_targets():
+    class PartialDetector(FakeDetector):
+        def __init__(self, frames):
+            super().__init__(frames)
+            self.icons_flags = []
+
+        def parse(self, image, icons=True):
+            self.icons_flags.append(icons)
+            return super().parse(image)
+
+    yaml_text = """
+settings: {timeout: 1, step_delay: 0}
+steps:
+  - click: {text: Edit}
+  - click: {text: Save, interactable: true}
+  - click: {id: 2}
+"""
+    sc = script.load(yaml_text)
+    det = PartialDetector([els()])
+    Runner(sc, det, DryRunBackend(), grabber=lambda: (Image.new("RGB", (10, 10)), (0, 0)),
+           sleep=lambda s: None).run()
+    assert det.icons_flags == [False, True, True]

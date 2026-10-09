@@ -3,13 +3,16 @@
 Повторяет пайплайн из microsoft/OmniParser (util/utils.py) в упрощённом виде, без подписей
 иконок Florence-2. Обе модели работают через onnxruntime, без torch:
 1. YOLO (icon_detect, экспорт в ONNX) находит интерактивные области.
-2. RapidOCR (PP-OCRv5) находит и распознаёт текст.
+2. RapidOCR (PP-OCRv5) находит и распознаёт текст (параллельно с YOLO).
 3. Текст, лежащий внутри области, становится её содержимым; остальной текст — отдельные элементы.
    Области без текста остаются с пустым content: на них ссылаются по id или координатам.
 """
 from __future__ import annotations
 
+import copy
+import hashlib
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,39 +30,75 @@ class OmniParserConfig:
     iou_threshold: float = 0.1
     imgsz: int = 1280  # меньше = быстрее, но мелкие иконки теряются
     ocr_min_score: float = 0.5
+    device: str = "cpu"  # "cpu", "gpu" (DirectML) или "auto"
+    parallel: bool = True  # YOLO и OCR одновременно, в двух потоках
 
 
 class OmniParser:
     def __init__(self, config: OmniParserConfig | None = None):
+        from .models import providers
         from .ocr import TextReader
         from .yolo_onnx import IconDetector
 
         self.cfg = config or OmniParserConfig()
         root = self.cfg.models_dir or models_dir()
         t = time.perf_counter()
+        prov = providers(self.cfg.device)
         self.icons = IconDetector(
-            require(root / ICON_DETECT), self.cfg.imgsz, self.cfg.box_threshold, self.cfg.iou_threshold
+            require(root / ICON_DETECT), self.cfg.imgsz, self.cfg.box_threshold, self.cfg.iou_threshold, prov
         )
-        self.ocr = TextReader(require(root / OCR_DIR), self.cfg.ocr_min_score)
+        self.ocr = TextReader(require(root / OCR_DIR), self.cfg.ocr_min_score, gpu=prov[0] != "CPUExecutionProvider")
+        self.device = self.icons.device
         self.load_time = time.perf_counter() - t
         self.last_timings: dict[str, float] = {}
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="yolo")
+        self._last: tuple[bytes, bool, list[UIElement]] | None = None
 
-    def parse(self, image: Image.Image) -> list[UIElement]:
+    def parse(self, image: Image.Image, icons: bool = True) -> list[UIElement]:
+        """icons=False пропускает YOLO: хватает, когда элемент ищется только по тексту."""
         t0 = time.perf_counter()
-        rgb = np.asarray(image.convert("RGB"))
-        icons = self.icons.detect(rgb)
-        t1 = time.perf_counter()
-        texts = self.ocr.read(rgb)
+        rgb = np.ascontiguousarray(np.asarray(image.convert("RGB")))
+        key = hashlib.blake2b(f"{rgb.shape}".encode() + rgb.tobytes(), digest_size=16).digest()
+        if self._last and self._last[0] == key and (self._last[1] or not icons):
+            # Экран не изменился с прошлого раза: модели не нужны.
+            self.last_timings = {"same_frame": 1, "total": time.perf_counter() - t0}
+            return [copy.copy(e) for e in self._last[2]]
+
+        yolo_time = 0.0
+
+        def run_yolo():
+            nonlocal yolo_time
+            t = time.perf_counter()
+            boxes = self.icons.detect(rgb)
+            yolo_time = time.perf_counter() - t
+            return boxes
+
+        if icons and self.cfg.parallel:
+            future = self._pool.submit(run_yolo)
+            texts = self.ocr.read(rgb)
+            boxes = future.result()
+        else:
+            boxes = run_yolo() if icons else []
+            texts = self.ocr.read(rgb)
         t2 = time.perf_counter()
-        elements = merge(icons, texts)
+        elements = merge(boxes, texts)
         t3 = time.perf_counter()
-        self.last_timings = {"yolo": t1 - t0, **self.ocr.last_stats, "merge": t3 - t2, "total": t3 - t0}
+        self.last_timings = {"yolo": yolo_time, **self.ocr.last_stats, "icons": int(icons),
+                             "merge": t3 - t2, "total": t3 - t0}
+        self._last = (key, icons, [copy.copy(e) for e in elements])
         return elements
+
+    def forget_frame(self) -> None:
+        """Следующий parse выполнит модели, даже если кадр не изменился (кэш OCR остаётся)."""
+        self._last = None
 
 
 def format_timings(t: dict[str, float]) -> str:
+    if t.get("same_frame"):
+        return f"кадр не изменился, модели пропущены, всего {t['total'] * 1000:.0f} мс"
+    yolo = f"YOLO {t['yolo'] * 1000:.0f} мс" if t.get("icons", 1) else "YOLO пропущен"
     return (
-        f"YOLO {t['yolo'] * 1000:.0f} мс, OCR поиск {t['ocr_det'] * 1000:.0f} мс, "
+        f"{yolo}, OCR поиск {t['ocr_det'] * 1000:.0f} мс, "
         f"OCR распознавание {t['ocr_rec'] * 1000:.0f} мс ({int(t['lines_recognized'])} из {int(t['lines'])} строк, "
         f"остальные из кэша), всего {t['total'] * 1000:.0f} мс"
     )

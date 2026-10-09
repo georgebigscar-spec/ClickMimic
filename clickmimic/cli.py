@@ -10,14 +10,15 @@ from pathlib import Path
 from .net import use_system_certs
 
 
-def _detector(imgsz: int | None = None):
+def _detector(args):
     from .detect.omniparser import OmniParser, OmniParserConfig
 
-    cfg = OmniParserConfig()
-    if imgsz:
-        cfg.imgsz = imgsz
+    cfg = OmniParserConfig(device=args.device, parallel=not getattr(args, "sequential", False))
+    if args.imgsz:
+        cfg.imgsz = args.imgsz
     parser = OmniParser(cfg)
-    logging.info("Модели загружены за %.0f мс", parser.load_time * 1000)
+    device = "видеокарта (DirectML)" if parser.device == "gpu" else "процессор"
+    logging.info("Модели загружены за %.0f мс, устройство: %s", parser.load_time * 1000, device)
     return parser
 
 
@@ -27,7 +28,7 @@ def cmd_parse(args) -> int:
     from . import annotate, capture
     from .detect.omniparser import format_timings
 
-    parser = _detector(args.imgsz)
+    parser = _detector(args)
     for n in range(args.repeat):
         t = time.perf_counter()
         if args.image:
@@ -35,6 +36,8 @@ def cmd_parse(args) -> int:
         else:
             image, offset = capture.grab_source(capture.Source(args.monitor, args.window or ""))
         grab_ms = (time.perf_counter() - t) * 1000
+        if not args.same_image:
+            parser.forget_frame()  # иначе повтор на той же картинке не запускает модели
         elements = parser.parse(image)
         print(f"Проход {n + 1}: снимок {grab_ms:.0f} мс, {format_timings(parser.last_timings)}", file=sys.stderr)
     for e in elements:
@@ -62,7 +65,7 @@ def cmd_run(args) -> int:
     source = capture.Source(sc.settings.monitor, sc.settings.window, sc.settings.process)
     runner = Runner(
         sc,
-        _detector(args.imgsz),
+        _detector(args),
         get_backend(args.dry_run),
         lambda: capture.grab_source(source, activate=True),
     )
@@ -100,6 +103,11 @@ def main(argv: list[str] | None = None) -> int:
     pp.add_argument("--json", help="сохранить элементы в JSON")
     pp.add_argument("--repeat", type=int, default=1, help="распознать N раз подряд (замер скорости; со 2-го раза работает кэш OCR)")
     pp.add_argument("--imgsz", type=int, help="размер входа YOLO (по умолчанию 1280; 960/640 быстрее, но мелкие иконки теряются)")
+    pp.add_argument("--device", choices=["cpu", "gpu", "auto"], default="cpu",
+                    help="gpu = видеокарта через DirectML (если есть), auto = видеокарта, иначе процессор")
+    pp.add_argument("--sequential", action="store_true", help="YOLO и OCR по очереди, а не параллельно (для сравнения)")
+    pp.add_argument("--same-image", action="store_true",
+                    help="с --repeat: не сбрасывать кэш кадра (иначе повторы считают модели заново)")
     pp.set_defaults(func=cmd_parse)
 
     pr = sub.add_parser("run", help="выполнить сценарий")
@@ -107,6 +115,8 @@ def main(argv: list[str] | None = None) -> int:
     pr.add_argument("--var", action="append", default=[], metavar="KEY=VALUE", help="подстановка ${KEY}")
     pr.add_argument("--dry-run", action="store_true", help="распознавать, но не нажимать")
     pr.add_argument("--imgsz", type=int, help="размер входа YOLO")
+    pr.add_argument("--device", choices=["cpu", "gpu", "auto"], default="cpu",
+                    help="gpu = видеокарта через DirectML (если есть), auto = видеокарта, иначе процессор")
     pr.add_argument("--window", help="работать с окном, в заголовке которого есть этот текст (перекрывает settings.window)")
     pr.set_defaults(func=cmd_run)
 

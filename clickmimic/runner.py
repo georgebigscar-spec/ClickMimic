@@ -1,6 +1,7 @@
 """Выполнение сценария: снимок экрана -> распознавание -> поиск цели -> ввод."""
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from typing import Callable
@@ -39,12 +40,19 @@ class Runner:
         self.clock = clock
         self.last_image: Image.Image | None = None
         self.stop = stop or (lambda: False)
+        self._partial = "icons" in inspect.signature(detector.parse).parameters
 
-    def snapshot(self) -> list[UIElement]:
-        """Распознаёт экран и переводит координаты элементов в экранные."""
+    def snapshot(self, icons: bool = True) -> list[UIElement]:
+        """Распознаёт экран и переводит координаты элементов в экранные.
+
+        icons=False разрешает детектору пропустить YOLO (цель ищется только по тексту).
+        """
         image, (ox, oy) = self.grab()
         self.last_image = image
-        elements = self.detector.parse(image)
+        if self._partial:
+            elements = self.detector.parse(image, icons=icons)
+        else:
+            elements = self.detector.parse(image)
         timings = getattr(self.detector, "last_timings", None)
         if timings:
             from .detect.omniparser import format_timings
@@ -64,7 +72,8 @@ class Runner:
     def _wait(self, step: Step, present: bool) -> UIElement | None:
         deadline = self.clock() + float(step.args.get("timeout", self.s.timeout))
         while True:
-            el = find(self.snapshot(), step.target)
+            t = step.target
+            el = find(self.snapshot(icons=t.id is not None or t.interactable is not None), t)
             if (el is not None) == present:
                 return el
             if self.clock() >= deadline:
