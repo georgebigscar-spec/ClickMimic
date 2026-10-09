@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 MODELS = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "build" / "models"
 DIST = ROOT / "dist" / "clickmimic"
 
-HIDDEN = ["clickmimic.detect.omniparser", "clickmimic.input.sendinput", "truststore", "certifi"]
+HIDDEN = ["clickmimic.detect.omniparser", "clickmimic.input.sendinput", "mss", "truststore", "certifi"]
 # rapidocr читает свои config.yaml/default_models.yaml с диска.
 COLLECT_ALL = ["clickmimic", "rapidocr", "certifi"]
 # Подготовка моделей ставит torch/ultralytics в то же окружение; в exe они не нужны.
@@ -33,6 +33,9 @@ args = [
     "--distpath", str(ROOT / "dist"),
     "--workpath", str(ROOT / "build" / "pyinstaller"),
     "--specpath", str(ROOT / "build"),
+    # Пакет установлен в editable-режиме, такой импорт PyInstaller не видит: без --paths он не
+    # анализирует clickmimic и теряет его зависимости (например, mss для снимка экрана).
+    "--paths", str(ROOT),
 ]
 args += [f"--hidden-import={m}" for m in HIDDEN]
 args += [f"--collect-all={m}" for m in COLLECT_ALL]

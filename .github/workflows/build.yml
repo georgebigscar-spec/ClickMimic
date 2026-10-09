@@ -65,6 +65,9 @@ jobs:
           dist\clickmimic\clickmimic.exe parse --image smoke.png --repeat 3 --json smoke.json --out smoke_parsed.png
           if ($LASTEXITCODE -ne 0) { exit 1 }
           dist\clickmimic\clickmimic.exe parse --image smoke.png --imgsz 960 --repeat 2 > $null
+          # Снимок настоящего экрана раннера: проверяет, что в сборку попал mss.
+          dist\clickmimic\clickmimic.exe parse --out screen_parsed.png > $null
+          if ($LASTEXITCODE -ne 0) { Write-Error "parse со снимком экрана упал"; exit 1 }
           $els = Get-Content smoke.json -Raw | ConvertFrom-Json
           Write-Host "Найдено элементов: $($els.Count)"
           $texts = ($els | ForEach-Object { $_.content }) -join " | "
@@ -90,6 +93,7 @@ jobs:
             smoke.png
             smoke_parsed.png
             smoke.json
+            screen_parsed.png
           if-no-files-found: ignore
 
   release:
