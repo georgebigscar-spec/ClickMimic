@@ -741,7 +741,7 @@ class RecordSession:
         frm = ttk.Frame(top, padding=(8, 4))
         frm.pack()
         self.label = tk.StringVar(value="● Запись 00:00")
-        ttk.Label(frm, textvariable=self.label, foreground="#d22", width=34).pack(side="left")
+        ttk.Label(frm, textvariable=self.label, foreground="#d22", width=44).pack(side="left")
         self.pause_btn = ttk.Button(frm, text="Пауза", command=self.toggle_pause)
         self.pause_btn.pack(side="left", padx=4)
         ttk.Button(frm, text="■ Стоп", command=self.finish).pack(side="left")
@@ -749,10 +749,27 @@ class RecordSession:
         top.geometry(f"+{max(0, (top.winfo_screenwidth() - top.winfo_width()) // 2)}+8")
 
         self.hooks.start()
+        self._warn_admin()
         app.root.iconify()
         self._focus_target()
         top.after(200, self._tick)
         log.info("Запись: %s. Остановить: «Стоп» на панели или клавиша Pause.", source.describe())
+
+    def _warn_admin(self) -> None:
+        from . import windows
+
+        try:
+            blocked = self.hwnd and windows.runs_as_admin(self.hwnd) and not windows.runs_as_admin()
+        except Exception:
+            return
+        if blocked:
+            from tkinter import messagebox
+
+            log.warning("Окно запущено от имени администратора, а ClickMimic нет")
+            messagebox.showwarning(
+                "Запись", "Это окно запущено от имени администратора. Windows не передаёт его клики и нажатия "
+                "программам с обычными правами, поэтому шаги не запишутся и сценарий не сможет кликать.\n\n"
+                "Запустите ClickMimic от имени администратора (правый клик по clickmimic.exe).", parent=self.top)
 
     # --- снимки и область записи (вызываются из потоков записи) ---
 
@@ -808,7 +825,9 @@ class RecordSession:
                 self.finish()
             secs = int(time.monotonic() - self.started)
             state = "⏸ Пауза" if rec.paused else "● Запись"
-            extra = f", вне окна: {rec.ignored}" if rec.ignored else ""
+            clicks = getattr(self.hooks, "received", None)
+            extra = f"  кликов: {clicks}" if clicks is not None else ""
+            extra += f", вне окна: {rec.ignored}" if rec.ignored else ""
             self.label.set(f"{state} {secs // 60:02d}:{secs % 60:02d}  шагов: {rec.actions}{extra}")
         t.after(200, self._tick)
 

@@ -1,12 +1,13 @@
 """Запись действий пользователя в сценарий.
 
-Хуки мыши и клавиатуры (hooks.py) сообщают о нажатиях. На каждый клик снимается окно, кадр
-распознаётся в фоне, и клик превращается в шаг по тексту элемента под курсором
-(`click: {text: "Сохранить"}`), а если текста нет — в шаг по ближайшей подписи со смещением или
-по координатам внутри окна. Нажатия клавиш собираются в `type`, сочетания — в `hotkey`.
+Хуки мыши и клавиатуры (hooks.py) сообщают о нажатиях. На каждый клик снимается окно, текст вокруг
+курсора распознаётся в фоне, и клик превращается в шаг по тексту элемента под курсором
+(`click: {text: "Сохранить", near: [x, y]}`), а если текста нет — в шаг по ближайшей подписи со
+смещением или по координатам внутри окна. Нажатия клавиш собираются в `type`, сочетания — в `hotkey`.
 """
 from __future__ import annotations
 
+import inspect
 import logging
 import queue
 import threading
@@ -27,6 +28,7 @@ DOUBLE_CLICK_TIME = 0.5  # с
 DOUBLE_CLICK_DIST = 4  # px
 LABEL_DIST = 40  # px: насколько далеко от клика может быть подпись для элемента без текста
 STOP_KEY = "pause"  # клавиша Pause/Break останавливает запись
+CROP = (800, 256)  # px: полоса вокруг клика, в которой ищется текст
 
 # Клавиши, которые записываются отдельным шагом press, а не текстом.
 SPECIAL_KEYS = {
@@ -53,33 +55,34 @@ class ClickRecord:
         return "right_click" if self.button == "right" else "click"
 
 
-def _unique_index(elements: list[UIElement], target: Target, el: UIElement) -> int | None:
-    for i in range(20):
-        found = find(elements, Target(**{**target.__dict__, "index": i}))
-        if found is None:
-            return None
-        if found.id == el.id:
-            return i
-    return None
+def _exact_needed(elements: list[UIElement], text: str, el: UIElement) -> bool:
+    """Нечёткий поиск по тексту найдёт другой элемент лучше этого (например, «Файл» и «Файлы»)."""
+    best = find(elements, Target(text=text, near=el.bbox.center))
+    return best is not None and best.id != el.id
 
 
 def target_for_click(elements: list[UIElement], x: int, y: int) -> dict:
-    """Цель шага для клика в точке (x, y) кадра. Координаты elements — в том же кадре."""
+    """Цель шага для клика в точке (x, y) кадра. Координаты elements — в том же кадре.
+
+    near — место клика в окне: если при воспроизведении найдётся несколько одинаковых надписей,
+    кликнется ближайшая к нему.
+    """
+    def labelled_spec(el: UIElement) -> dict:
+        spec: dict = {"text": el.content.strip()}
+        if _exact_needed(elements, spec["text"], el):
+            spec["exact"] = True
+        return spec
+
     inside = [e for e in elements if e.bbox.x1 <= x <= e.bbox.x2 and e.bbox.y1 <= y <= e.bbox.y2]
     labelled = [e for e in inside if e.content.strip()]
     if labelled:
         el = min(labelled, key=lambda e: e.bbox.area)
-        spec: dict = {"text": el.content.strip()}
-        index = _unique_index(elements, Target(text=spec["text"]), el)
-        if index is None:  # нечёткое совпадение уводит к другому элементу: требуем точное
-            spec["exact"] = True
-            index = _unique_index(elements, Target(text=spec["text"], exact=True), el) or 0
-        if index:
-            spec["index"] = index
+        spec = labelled_spec(el)
         # Для широких элементов (поле ввода, строка списка) важно, куда именно кликнули.
         cx, cy = el.bbox.center
         if el.bbox.x2 - el.bbox.x1 > 200 and abs(x - cx) > 40:
             spec["offset"] = [int(x - cx), int(y - cy)]
+        spec["near"] = [int(x), int(y)]
         return spec
 
     # Элемент без текста: ищем ближайшую подпись и кликаем со смещением от неё.
@@ -91,19 +94,16 @@ def target_for_click(elements: list[UIElement], x: int, y: int) -> dict:
     labels = [e for e in elements if e.content.strip() and dist(e) <= LABEL_DIST]
     if labels:
         el = min(labels, key=dist)
-        spec = {"text": el.content.strip()}
-        index = _unique_index(elements, Target(text=spec["text"]), el)
-        if index is not None:
-            if index:
-                spec["index"] = index
-            cx, cy = el.bbox.center
-            spec["offset"] = [int(x - cx), int(y - cy)]
-            return spec
+        spec = labelled_spec(el)
+        cx, cy = el.bbox.center
+        spec["offset"] = [int(x - cx), int(y - cy)]
+        spec["near"] = [int(x), int(y)]
+        return spec
     return {"rel": [int(x), int(y)]}
 
 
 def _flow(value) -> str:
-    return yaml.safe_dump(value, default_flow_style=True, allow_unicode=True, width=10_000).strip().removesuffix("...").strip()
+    return yaml.safe_dump(value, default_flow_style=True, allow_unicode=True, width=10_000, sort_keys=False).strip().removesuffix("...").strip()
 
 
 class ScriptBuilder:
@@ -208,9 +208,12 @@ class Recorder:
     def __init__(self, source: Source, detector, grab: Callable[[], tuple[Image.Image, tuple[int, int]]],
                  region: Callable[[], tuple[int, int, int, int] | None] = lambda: None,
                  ignore: Callable[[int, int], bool] = lambda x, y: False,
-                 on_change: Callable[[], None] = lambda: None, clock: Callable[[], float] = time.monotonic):
+                 on_change: Callable[[], None] = lambda: None, clock: Callable[[], float] = time.monotonic,
+                 crop: tuple[int, int] = CROP):
         self.builder = ScriptBuilder(source)
         self.detector = detector
+        self._fast = {"icons", "upscale"} <= set(inspect.signature(detector.parse).parameters)
+        self.crop = crop
         self.grab = grab
         self.region = region  # (left, top, width, height) области записи на экране или None
         self.ignore = ignore  # клики по панели записи
@@ -251,7 +254,8 @@ class Recorder:
 
     @property
     def actions(self) -> int:
-        return len(self.builder.items)
+        """Шагов на сейчас, включая набираемый текст."""
+        return len(self.builder.items) + bool(self.builder._text)
 
     @property
     def pending(self) -> int:
@@ -301,14 +305,41 @@ class Recorder:
             _, name, char, mods, t = ev
             self.builder.key(name, char, mods)
 
+    def _parse(self, image: Image.Image, **kw) -> list[UIElement]:
+        return self.detector.parse(image, **kw) if self._fast else self.detector.parse(image)
+
+    def elements_near(self, image: Image.Image, x: int, y: int) -> list[UIElement]:
+        """Текст вокруг точки клика в координатах кадра.
+
+        Распознаётся только полоса CROP вокруг клика, без YOLO и без растягивания: это в разы быстрее
+        всего окна. Если надпись под курсором обрезана краем полосы, распознаётся весь кадр.
+        """
+        W, H = image.size
+        cw, ch = min(self.crop[0], W), min(self.crop[1], H)
+        if not self._fast:  # детектор без этих режимов (например, в тестах): весь кадр
+            return self.detector.parse(image)
+        if (cw, ch) == (W, H):
+            return self._parse(image, icons=False)
+        left = min(max(0, x - cw // 2), W - cw)
+        top = min(max(0, y - ch // 2), H - ch)
+        elements = self._parse(image.crop((left, top, left + cw, top + ch)), icons=False, upscale=False)
+        for e in elements:
+            e.bbox = e.bbox.offset(left, top)
+        cut = [e for e in elements if e.bbox.x1 <= x <= e.bbox.x2 and e.bbox.y1 <= y <= e.bbox.y2
+               and ((e.bbox.x1 <= left + 1 and left > 0) or (e.bbox.x2 >= left + cw - 1 and left + cw < W)
+                    or (e.bbox.y1 <= top + 1 and top > 0) or (e.bbox.y2 >= top + ch - 1 and top + ch < H))]
+        if cut:
+            return self._parse(image, icons=False)
+        return elements
+
     def _parse_loop(self) -> None:
         while True:
             rec = self._parse_queue.get()
             if rec is None:
                 return
             try:
-                elements = self.detector.parse(rec.image)
-                rec.spec = target_for_click(elements, rec.x - rec.offset[0], rec.y - rec.offset[1])
+                x, y = rec.x - rec.offset[0], rec.y - rec.offset[1]
+                rec.spec = target_for_click(self.elements_near(rec.image, x, y), x, y)
             except Exception:
                 log.exception("Не удалось распознать кадр клика")
             finally:

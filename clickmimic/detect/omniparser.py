@@ -54,11 +54,12 @@ class OmniParser:
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="yolo")
         self._last: tuple[bytes, bool, list[UIElement]] | None = None
 
-    def parse(self, image: Image.Image, icons: bool = True) -> list[UIElement]:
-        """icons=False пропускает YOLO: хватает, когда элемент ищется только по тексту."""
+    def parse(self, image: Image.Image, icons: bool = True, upscale: bool = True) -> list[UIElement]:
+        """icons=False пропускает YOLO: хватает, когда элемент ищется только по тексту.
+        upscale=False ищет текст в исходном масштабе (для небольших фрагментов экрана)."""
         t0 = time.perf_counter()
         rgb = np.ascontiguousarray(np.asarray(image.convert("RGB")))
-        key = hashlib.blake2b(f"{rgb.shape}".encode() + rgb.tobytes(), digest_size=16).digest()
+        key = hashlib.blake2b(f"{rgb.shape}{upscale}".encode() + rgb.tobytes(), digest_size=16).digest()
         if self._last and self._last[0] == key and (self._last[1] or not icons):
             # Экран не изменился с прошлого раза: модели не нужны.
             self.last_timings = {"same_frame": 1, "total": time.perf_counter() - t0}
@@ -75,11 +76,11 @@ class OmniParser:
 
         if icons and self.cfg.parallel:
             future = self._pool.submit(run_yolo)
-            texts = self.ocr.read(rgb)
+            texts = self.ocr.read(rgb, upscale=upscale)
             boxes = future.result()
         else:
             boxes = run_yolo() if icons else []
-            texts = self.ocr.read(rgb)
+            texts = self.ocr.read(rgb, upscale=upscale)
         t2 = time.perf_counter()
         elements = merge(boxes, texts)
         t3 = time.perf_counter()

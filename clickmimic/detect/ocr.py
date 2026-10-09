@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
@@ -57,15 +58,26 @@ class TextReader:
 
         self._rec_input = TextRecInput
         self.engine = build_engine(model_root, gpu)
+        self._lock = threading.Lock()
         self.min_score = min_score
         self.cache: OrderedDict[bytes, tuple[str, float]] = OrderedDict()
         self.cache_size = cache_size
         self.last_stats: dict[str, float] = {}
 
-    def read(self, rgb: np.ndarray) -> list[tuple[BBox, str, float]]:
+    def read(self, rgb: np.ndarray, upscale: bool = True) -> list[tuple[BBox, str, float]]:
+        """upscale=False: поиск строк в исходном масштабе. По умолчанию RapidOCR растягивает картинку,
+        пока меньшая сторона не станет 736 px: для небольшого фрагмента экрана это лишняя работа."""
         bgr = np.ascontiguousarray(rgb[:, :, ::-1])
         t0 = time.perf_counter()
-        det = self.engine.text_det(bgr)
+        with self._lock:
+            det_model = self.engine.text_det
+            saved = det_model.limit_type, det_model.limit_side_len
+            if not upscale:
+                det_model.limit_type, det_model.limit_side_len = "max", 4096
+            try:
+                det = det_model(bgr)
+            finally:
+                det_model.limit_type, det_model.limit_side_len = saved
         t1 = time.perf_counter()
         quads = det.boxes if det.boxes is not None else []
 

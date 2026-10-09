@@ -81,7 +81,7 @@ def test_recorder_with_real_hooks_counts_steps():
         h.stop()
         rec.stop()
     assert rec.wait(5)
-    assert rec.builder.steps()[0] == {"click": {"text": "Кнопка"}}
+    assert rec.builder.steps()[0] == {"click": {"text": "Кнопка", "near": [200, 200]}}
 
 
 def test_gui_recording_with_real_hooks(tmp_path):
@@ -100,7 +100,7 @@ def test_gui_recording_with_real_hooks(tmp_path):
             pass
 
         def parse(self, image, icons=True):
-            return [UIElement(0, "text", BBox(150, 150, 250, 250), "Кнопка", False)]
+            return [UIElement(0, "text", BBox(150, 250, 250, 350), "Кнопка", False)]
 
     root = tk.Tk()
     try:
@@ -135,3 +135,14 @@ def test_gui_recording_with_real_hooks(tmp_path):
             root.destroy()
         except tk.TclError:
             pass
+
+
+def test_runs_as_admin_for_own_and_shell_window():
+    import ctypes
+
+    from clickmimic import windows
+
+    assert isinstance(windows.runs_as_admin(), bool)
+    shell = ctypes.windll.user32.GetShellWindow()
+    if shell:
+        assert isinstance(windows.runs_as_admin(shell), bool)

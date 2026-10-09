@@ -100,7 +100,7 @@ def make_parser(texts, boxes):
         calls["yolo"] += 1
         return boxes
 
-    def read(rgb):
+    def read(rgb, upscale=True):
         calls["ocr"] += 1
         return texts
 

@@ -174,7 +174,7 @@ def test_gui_records_actions_into_script(tk_root, tmp_path, monkeypatch):
 
     assert not session.hooks.running
     yaml_text = app.editor.text.get("1.0", "end-1c")
-    assert "- click: {text: Файл}" in yaml_text and "- type: ok" in yaml_text
+    assert "- click: {text: Файл, near: [30, 20]}" in yaml_text and "- type: ok" in yaml_text
     path = tmp_path / "rec.yaml"
     assert app.editor.save(path=str(path))
     assert app.script_var.get() == str(path) and path.read_text("utf-8") == yaml_text
