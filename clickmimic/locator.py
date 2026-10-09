@@ -20,13 +20,14 @@ class Target:
     region: tuple[int, int, int, int] | None = None  # left, top, width, height (экранные координаты)
     offset: tuple[int, int] = (0, 0)
     at: tuple[int, int] | None = None  # абсолютные координаты, без распознавания
+    rel: tuple[int, int] | None = None  # координаты внутри окна/монитора сценария, без распознавания
 
     @classmethod
     def from_spec(cls, spec: dict | str) -> "Target":
         if isinstance(spec, str):
             return cls(text=spec)
         known = {k: v for k, v in spec.items() if k in cls.__dataclass_fields__}
-        for key in ("region", "offset", "at"):
+        for key in ("region", "offset", "at", "rel"):
             if known.get(key) is not None:
                 known[key] = tuple(known[key])
         return cls(**known)
@@ -34,6 +35,8 @@ class Target:
     def describe(self) -> str:
         if self.at:
             return f"точка {self.at}"
+        if self.rel:
+            return f"точка {self.rel} в окне"
         parts = [f"{k}={v!r}" for k, v in (("text", self.text), ("id", self.id)) if v is not None]
         return ", ".join(parts) + (f" #{self.index}" if self.index else "")
 

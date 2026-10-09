@@ -137,6 +137,8 @@ class App:
         self.live_item: SourceItem | None = None
         self.stop_run = threading.Event()
         self.running_script = False
+        self.recording: RecordSession | None = None
+        self.hooks_factory = default_hooks_factory  # подменяется в тестах
         self.result: ParseResult | None = None
         self.sources: list[SourceItem] = []
         self.image_item: SourceItem | None = None
@@ -175,6 +177,8 @@ class App:
         self.parse_btn = ttk.Button(bar, text="Распознать (F5)", command=self.parse_once)
         self.parse_btn.pack(side="left", padx=(12, 4))
         ttk.Checkbutton(bar, text="Непрерывно", variable=self.live, command=self._live_toggled).pack(side="left")
+        self.rec_btn = ttk.Button(bar, text="● Запись", command=self.start_recording)
+        self.rec_btn.pack(side="left", padx=(12, 0))
         ttk.Button(bar, text="Настройки…", command=self.open_settings).pack(side="right")
         ttk.Button(bar, text="Сохранить…", command=self.save_result).pack(side="right", padx=4)
 
@@ -347,7 +351,7 @@ class App:
         return ParseResult(image, offset, elements, dict(getattr(self.detector, "last_timings", {})), grab_ms)
 
     def parse_once(self) -> None:
-        if self.detector is None or self.running_script:
+        if self.detector is None or self.running_script or self.recording is not None:
             return
         item = self.current_item()
 
@@ -661,16 +665,231 @@ class App:
         if self.save_settings:
             self.s.save()
 
+    # ---------- запись ----------
+
+    def start_recording(self) -> None:
+        from tkinter import messagebox
+
+        item = self.current_item()
+        if self.detector is None or self.running_script or self.recording is not None:
+            return
+        if item.source is None:
+            messagebox.showinfo("Запись", "Выберите монитор или окно приложения: запись идёт с экрана, а не с картинки.")
+            return
+        self._stop_live()
+        try:
+            self.recording = RecordSession(self, Source(**asdict(item.source)))
+        except Exception as exc:
+            self.recording = None
+            messagebox.showerror("Запись", f"Не удалось начать запись:\n{exc}")
+
+    def _recording_done(self, yaml_text: str) -> None:
+        self.recording = None
+        if self.root.state() == "iconic":
+            self.root.deiconify()
+        self.editor = ScriptEditor(self, yaml_text)
+
     def _stop_live(self) -> None:
         self.live.set(False)
         self.live_flag.clear()
 
     def close(self) -> None:
         self._stop_live()
+        if self.recording is not None:
+            self.recording.abort()
         self.stop_run.set()
         self._persist()
         logging.getLogger().removeHandler(self._log_handler)
         self.root.destroy()
+
+
+def default_hooks_factory(recorder):
+    """Глобальные хуки Windows; вне Windows записи нет."""
+    if sys.platform != "win32":
+        raise RuntimeError("Запись действий работает только в Windows")
+    from . import hooks
+
+    return hooks.InputHooks(recorder.on_mouse, recorder.on_wheel, recorder.on_key,
+                            key_filter=lambda: hooks.foreground_pid() != hooks.OWN_PID)
+
+
+class RecordSession:
+    """Запись: целевое окно впереди, главное окно свёрнуто, маленькая панель поверх всех окон."""
+
+    def __init__(self, app: App, source: Source):
+        import tkinter as tk
+        from tkinter import ttk
+
+        from .recorder import Recorder
+
+        self.app = app
+        self.source = source
+        self.hwnd = capture.resolve_window(source) if source.window else None
+        self.started = time.monotonic()
+        self.finishing = False
+        self.panel_rect = (0, 0, 0, 0)
+        self.recorder = Recorder(source, app.detector, self._grab, region=self._region, ignore=self._on_panel)
+        self.hooks = app.hooks_factory(self.recorder)
+
+        top = self.top = tk.Toplevel(app.root)
+        top.title("ClickMimic — запись")
+        top.attributes("-topmost", True)
+        if sys.platform == "win32":
+            top.attributes("-toolwindow", True)
+        top.resizable(False, False)
+        top.protocol("WM_DELETE_WINDOW", self.finish)
+        frm = ttk.Frame(top, padding=(8, 4))
+        frm.pack()
+        self.label = tk.StringVar(value="● Запись 00:00")
+        ttk.Label(frm, textvariable=self.label, foreground="#d22", width=34).pack(side="left")
+        self.pause_btn = ttk.Button(frm, text="Пауза", command=self.toggle_pause)
+        self.pause_btn.pack(side="left", padx=4)
+        ttk.Button(frm, text="■ Стоп", command=self.finish).pack(side="left")
+        top.update_idletasks()
+        top.geometry(f"+{max(0, (top.winfo_screenwidth() - top.winfo_width()) // 2)}+8")
+
+        self.hooks.start()
+        app.root.iconify()
+        self._focus_target()
+        top.after(200, self._tick)
+        log.info("Запись: %s. Остановить: «Стоп» на панели или клавиша Pause.", source.describe())
+
+    # --- снимки и область записи (вызываются из потоков записи) ---
+
+    def _region(self) -> tuple[int, int, int, int] | None:
+        from . import windows
+
+        if self.hwnd:
+            return windows.rect(self.hwnd)
+        try:
+            import mss
+
+            with mss.mss() as sct:
+                m = sct.monitors[self.source.monitor]
+            return m["left"], m["top"], m["width"], m["height"]
+        except Exception:
+            return None
+
+    def _grab(self):
+        if self.hwnd:
+            # Окно впереди, поэтому снимаем экран: так в кадр попадают и открытые меню.
+            return capture.grab(region=self._region())
+        return capture.grab(self.source.monitor)
+
+    def _on_panel(self, x: int, y: int) -> bool:
+        px, py, pw, ph = self.panel_rect
+        return px <= x < px + pw and py <= y < py + ph
+
+    def _focus_target(self) -> None:
+        if self.hwnd:
+            from . import windows
+
+            try:
+                windows.activate(self.hwnd)
+            except Exception:
+                log.warning("Не удалось вывести окно на передний план")
+
+    # --- панель ---
+
+    def _tick(self) -> None:
+        if not self.top.winfo_exists():
+            return
+        t = self.top
+        self.panel_rect = (t.winfo_rootx(), t.winfo_rooty(), t.winfo_width(), t.winfo_height())
+        rec = self.recorder
+        if self.finishing:
+            if rec.pending:
+                self.label.set(f"Обработка кликов: осталось {rec.pending}")
+            else:
+                self._done()
+                return
+        else:
+            if rec.stop_requested:
+                self.finish()
+            secs = int(time.monotonic() - self.started)
+            state = "⏸ Пауза" if rec.paused else "● Запись"
+            extra = f", вне окна: {rec.ignored}" if rec.ignored else ""
+            self.label.set(f"{state} {secs // 60:02d}:{secs % 60:02d}  шагов: {rec.actions}{extra}")
+        t.after(200, self._tick)
+
+    def toggle_pause(self) -> None:
+        rec = self.recorder
+        rec.paused = not rec.paused
+        self.pause_btn.configure(text="Продолжить" if rec.paused else "Пауза")
+        if not rec.paused:
+            self._focus_target()
+
+    def finish(self) -> None:
+        if self.finishing:
+            return
+        self.finishing = True
+        self.hooks.stop()
+        self.recorder.stop()
+        self.pause_btn.state(["disabled"])
+
+    def _done(self) -> None:
+        self.recorder.wait(5)
+        text = self.recorder.builder.to_yaml()
+        self.top.destroy()
+        log.info("Запись остановлена: %d шагов", len(self.recorder.builder.steps()))
+        self.app._recording_done(text)
+
+    def abort(self) -> None:
+        self.hooks.stop()
+        self.recorder.stop()
+
+
+class ScriptEditor:
+    """Записанный сценарий: можно поправить, сохранить и запустить."""
+
+    def __init__(self, app: App, text: str):
+        import tkinter as tk
+        from tkinter import ttk
+
+        self.app = app
+        top = self.top = tk.Toplevel(app.root)
+        top.title("Записанный сценарий")
+        top.geometry("760x520")
+        frm = ttk.Frame(top, padding=8)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="Проверьте шаги: клики ищут элементы по тексту, rel — координаты внутри окна.").pack(anchor="w")
+        body = ttk.Frame(frm)
+        body.pack(fill="both", expand=True, pady=6)
+        self.text = tk.Text(body, wrap="none", font=("Consolas", 10), undo=True)
+        sb = ttk.Scrollbar(body, orient="vertical", command=self.text.yview)
+        self.text.configure(yscrollcommand=sb.set)
+        self.text.pack(side="left", fill="both", expand=True)
+        sb.pack(side="left", fill="y")
+        self.text.insert("1.0", text)
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x")
+        ttk.Button(btns, text="Сохранить…", command=self.save).pack(side="left")
+        ttk.Button(btns, text="Сохранить и запустить", command=lambda: self.save(run=True)).pack(side="left", padx=6)
+        ttk.Button(btns, text="Закрыть", command=top.destroy).pack(side="right")
+
+    def save(self, run: bool = False, path: str | None = None) -> bool:
+        from tkinter import filedialog, messagebox
+
+        from . import script
+
+        content = self.text.get("1.0", "end-1c")
+        try:
+            script.load(content)
+        except Exception as exc:
+            messagebox.showerror("Сценарий", f"Ошибка в сценарии:\n{exc}", parent=self.top)
+            return False
+        path = path or filedialog.asksaveasfilename(parent=self.top, title="Сохранить сценарий", defaultextension=".yaml",
+                                                    initialfile="recorded.yaml", filetypes=[("YAML", "*.yaml *.yml")])
+        if not path:
+            return False
+        Path(path).write_text(content, "utf-8")
+        self.app.script_var.set(path)
+        self.app._persist()
+        self.app.status.set(f"Сценарий сохранён: {path}")
+        self.top.destroy()
+        if run:
+            self.app.run_script()
+        return True
 
 
 class SettingsDialog:
