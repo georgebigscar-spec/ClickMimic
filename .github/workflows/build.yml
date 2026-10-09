@@ -65,6 +65,9 @@ jobs:
           dist\clickmimic\clickmimic.exe parse --image smoke.png --repeat 3 --json smoke.json --out smoke_parsed.png
           if ($LASTEXITCODE -ne 0) { exit 1 }
           dist\clickmimic\clickmimic.exe parse --image smoke.png --imgsz 960 --repeat 2 > $null
+          # Окно программы: открывается, грузит модели, распознаёт картинку и закрывается.
+          dist\clickmimic\clickmimic.exe gui --smoke smoke.png
+          if ($LASTEXITCODE -ne 0) { Write-Error "GUI не распознал картинку"; exit 1 }
           # Снимок настоящего экрана раннера: проверяет, что в сборку попал mss.
           dist\clickmimic\clickmimic.exe parse --out screen_parsed.png > $null
           if ($LASTEXITCODE -ne 0) { Write-Error "parse со снимком экрана упал"; exit 1 }

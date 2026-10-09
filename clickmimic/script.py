@@ -2,6 +2,7 @@
 
 name: Открыть блокнот
 settings: {monitor: 1, timeout: 10, move_duration: 0.25, typing_interval: 0.03}
+# или окно приложения вместо монитора: settings: {window: "Блокнот"}
 steps:
   - hotkey: [win, r]
   - type: "notepad\n"
@@ -28,6 +29,8 @@ ACTIONS = {
 @dataclass
 class Settings:
     monitor: int = 1
+    window: str = ""  # часть заголовка окна: снимать и активировать только его
+    process: str = ""  # имя exe окна, если заголовок неоднозначен
     timeout: float = 10.0
     poll_interval: float = 0.5
     move_duration: float = 0.25

@@ -33,7 +33,7 @@ def cmd_parse(args) -> int:
         if args.image:
             image, offset = Image.open(args.image).convert("RGB"), (0, 0)
         else:
-            image, offset = capture.grab(args.monitor)
+            image, offset = capture.grab_source(capture.Source(args.monitor, args.window or ""))
         grab_ms = (time.perf_counter() - t) * 1000
         elements = parser.parse(image)
         print(f"Проход {n + 1}: снимок {grab_ms:.0f} мс, {format_timings(parser.last_timings)}", file=sys.stderr)
@@ -57,21 +57,30 @@ def cmd_run(args) -> int:
 
     variables = dict(v.split("=", 1) for v in args.var)
     sc = script.load(args.script, variables)
+    if args.window:
+        sc.settings.window = args.window
+    source = capture.Source(sc.settings.monitor, sc.settings.window, sc.settings.process)
     runner = Runner(
         sc,
         _detector(args.imgsz),
         get_backend(args.dry_run),
-        lambda: capture.grab(sc.settings.monitor),
+        lambda: capture.grab_source(source, activate=True),
     )
     try:
         runner.run()
-    except (ElementNotFound, Aborted) as exc:
+    except (ElementNotFound, Aborted, capture.WindowNotFound) as exc:
         logging.error("%s", exc)
         if runner.last_image is not None:
             runner.last_image.save("clickmimic_failure.png")
             logging.error("Последний снимок экрана: clickmimic_failure.png")
         return 1
     return 0
+
+
+def cmd_gui(args) -> int:
+    from .gui import run_gui
+
+    return run_gui(smoke_image=args.smoke)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -81,11 +90,12 @@ def main(argv: list[str] | None = None) -> int:
             stream.reconfigure(errors="replace")
     p = argparse.ArgumentParser(prog="clickmimic", description="Распознавание UI (OmniParser v2) и имитация действий пользователя")
     p.add_argument("-v", "--verbose", action="store_true")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    sub = p.add_subparsers(dest="cmd")
 
     pp = sub.add_parser("parse", help="распознать экран или картинку и вывести элементы")
     pp.add_argument("--image", help="файл вместо снимка экрана")
-    pp.add_argument("--monitor", type=int, default=1)
+    pp.add_argument("--monitor", type=int, default=1, help="номер монитора, 0 = все мониторы")
+    pp.add_argument("--window", help="снимать окно, в заголовке которого есть этот текст")
     pp.add_argument("--out", help="сохранить картинку с разметкой")
     pp.add_argument("--json", help="сохранить элементы в JSON")
     pp.add_argument("--repeat", type=int, default=1, help="распознать N раз подряд (замер скорости; со 2-го раза работает кэш OCR)")
@@ -97,9 +107,16 @@ def main(argv: list[str] | None = None) -> int:
     pr.add_argument("--var", action="append", default=[], metavar="KEY=VALUE", help="подстановка ${KEY}")
     pr.add_argument("--dry-run", action="store_true", help="распознавать, но не нажимать")
     pr.add_argument("--imgsz", type=int, help="размер входа YOLO")
+    pr.add_argument("--window", help="работать с окном, в заголовке которого есть этот текст (перекрывает settings.window)")
     pr.set_defaults(func=cmd_run)
 
+    pg = sub.add_parser("gui", help="окно программы (запускается и без команды)")
+    pg.add_argument("--smoke", metavar="IMAGE", help="проверка сборки: распознать картинку в окне и выйти")
+    pg.set_defaults(func=cmd_gui)
+
     args = p.parse_args(argv)
+    if args.cmd is None:  # двойной щелчок по exe открывает окно программы
+        args = p.parse_args(["gui"])
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
     use_system_certs()
     return args.func(args)
