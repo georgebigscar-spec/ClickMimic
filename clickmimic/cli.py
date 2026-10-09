@@ -86,6 +86,25 @@ def cmd_gui(args) -> int:
     return run_gui(smoke_image=args.smoke)
 
 
+def cmd_hooks_test(args) -> int:
+    """Проверка записи: печатает клики и нажатия, которые ловят хуки Windows."""
+    from . import hooks
+
+    def show(*a):
+        print(time.strftime("%H:%M:%S"), *a, flush=True)
+
+    h = hooks.InputHooks(lambda b, x, y: show("клик", b, x, y), lambda x, y, d: show("колесо", x, y, d),
+                         lambda n, c, m: show("клавиша", n, repr(c), "+".join(sorted(m))))
+    h.start()
+    print(f"Хуки установлены. Кликайте и нажимайте клавиши {args.seconds} с...", flush=True)
+    try:
+        time.sleep(args.seconds)
+    finally:
+        h.stop()
+    print(f"Поймано кликов: {h.received}", flush=True)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         # Кириллица в выводе (включая --help) не должна падать в консоли/пайпе с cp1251/cp866.
@@ -123,6 +142,10 @@ def main(argv: list[str] | None = None) -> int:
     pg = sub.add_parser("gui", help="окно программы (запускается и без команды)")
     pg.add_argument("--smoke", metavar="IMAGE", help="проверка сборки: распознать картинку в окне и выйти")
     pg.set_defaults(func=cmd_gui)
+
+    ph = sub.add_parser("hooks-test", help="проверить, что запись видит клики и нажатия")
+    ph.add_argument("--seconds", type=float, default=15)
+    ph.set_defaults(func=cmd_hooks_test)
 
     args = p.parse_args(argv)
     if args.cmd is None:  # двойной щелчок по exe открывает окно программы

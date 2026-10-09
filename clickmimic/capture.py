@@ -57,9 +57,16 @@ class Source:
     process: str = ""  # имя exe для уточнения, например "notepad.exe"
     hwnd: int | None = None  # конкретное окно, если оно уже выбрано (иначе ищется по заголовку)
 
+    @property
+    def is_window(self) -> bool:
+        """Окно задано заголовком, именем процесса или и тем и другим."""
+        return bool(self.window or self.process or self.hwnd)
+
     def describe(self) -> str:
         if self.window:
             return f"окно «{self.window}»" + (f" ({self.process})" if self.process else "")
+        if self.process:
+            return f"окно {self.process}"
         return "все мониторы" if self.monitor == 0 else f"монитор {self.monitor}"
 
 
@@ -82,7 +89,7 @@ def grab_source(src: Source, activate: bool = False) -> tuple[Image.Image, tuple
     куда попадут клики. Без активации окно снимается через PrintWindow, даже если его перекрывают
     другие окна (если приложение это не поддерживает, снимается область экрана).
     """
-    if not src.window:
+    if not src.is_window:
         return grab(src.monitor)
     from . import windows
 

@@ -184,9 +184,11 @@ class ScriptBuilder:
 
     def to_yaml(self, name: str = "Записанный сценарий") -> str:
         settings: dict = {"timeout": 10, "step_delay": 0.5}
-        if self.source.window:
-            settings = {"window": self.source.window, **({"process": self.source.process} if self.source.process else {}),
-                        **settings}
+        if self.source.window or self.source.process:
+            where = {"window": self.source.window} if self.source.window else {}
+            if self.source.process:
+                where["process"] = self.source.process
+            settings = {**where, **settings}
         else:
             settings = {"monitor": self.source.monitor, **settings}
         lines = [
@@ -196,7 +198,10 @@ class ScriptBuilder:
             f"settings: {_flow(settings)}",
             "steps:",
         ]
-        for step in self.steps():
+        steps = self.steps()
+        if not steps:
+            lines[-1] = "steps: []  # ничего не записано"
+        for step in steps:
             (action, value), = step.items()
             lines.append(f"  - {action}: {_flow(value)}")
         return "\n".join(lines) + "\n"

@@ -87,6 +87,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { Write-Error "parse --device gpu упал"; exit 1 }
           $gpu | Select-String -Pattern "DirectML|Модели|Повтор|Проход" | Select-Object -First 4
           if ("$gpu" -match "AzureExecutionProvider") { Write-Error "в exe попал onnxruntime без DirectML"; exit 1 }
+          # Хуки записи ставятся и снимаются в собранном exe.
+          dist\clickmimic\clickmimic.exe hooks-test --seconds 1
+          if ($LASTEXITCODE -ne 0) { Write-Error "hooks-test упал"; exit 1 }
           # Окно программы: открывается, грузит модели, распознаёт картинку и закрывается.
           dist\clickmimic\clickmimic.exe gui --smoke smoke.png
           if ($LASTEXITCODE -ne 0) { Write-Error "GUI не распознал картинку"; exit 1 }

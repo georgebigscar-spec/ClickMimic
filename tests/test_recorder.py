@@ -166,3 +166,11 @@ def test_recorder_reads_only_text_around_click(monkeypatch):
     assert target_for_click(rec.elements_near(frame, 500, 315), 500, 315)["offset"] == [195, 0]
     assert [c[0] for c in det.calls] == [(200, 64), (800, 800)]
     rec.stop()
+
+
+def test_process_only_source_in_yaml():
+    b = ScriptBuilder(Source(window="", process="explorer.exe"))
+    data = yaml.safe_load(b.to_yaml())
+    assert data["settings"]["process"] == "explorer.exe" and "window" not in data["settings"]
+    assert Source(process="explorer.exe").is_window and not Source().is_window
+    assert script.load(b.to_yaml()).settings.process == "explorer.exe"

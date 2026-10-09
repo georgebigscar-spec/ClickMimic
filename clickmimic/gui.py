@@ -530,7 +530,7 @@ class App:
             from .input import get_backend
 
             try:
-                if item.source.window and not dry:
+                if item.source.is_window and not dry:
                     from . import windows
 
                     windows.activate(capture.resolve_window(item.source))
@@ -590,7 +590,7 @@ class App:
             messagebox.showerror("Сценарий", f"Не удалось загрузить сценарий:\n{exc}")
             return
         item = self.current_item()
-        if sc.settings.window:
+        if sc.settings.window or sc.settings.process:
             source = Source(sc.settings.monitor, sc.settings.window, sc.settings.process)
         elif item.source is not None:
             source = Source(**{**asdict(item.source)})
@@ -602,7 +602,7 @@ class App:
         self.run_btn.state(["disabled"])
         self.parse_btn.state(["disabled"])
         self.stop_btn.state(["!disabled"])
-        minimize = self.s.minimize_during_run and not source.window and not self.dry_var.get()
+        minimize = self.s.minimize_during_run and not source.is_window and not self.dry_var.get()
         if minimize:
             self.root.iconify()
         log.info("Запуск: %s, %s%s", sc.name, source.describe(), " (без нажатий)" if self.dry_var.get() else "")
@@ -724,7 +724,8 @@ class RecordSession:
 
         self.app = app
         self.source = source
-        self.hwnd = capture.resolve_window(source) if source.window else None
+        self.hwnd = capture.resolve_window(source) if source.is_window else None
+        self.title_changed = False
         self.started = time.monotonic()
         self.finishing = False
         self.panel_rect = (0, 0, 0, 0)
@@ -777,6 +778,10 @@ class RecordSession:
         from . import windows
 
         if self.hwnd:
+            src = self.source
+            if src.window and src.process and not self.title_changed:
+                # Проводник и браузеры меняют заголовок при переходах: тогда искать окно по нему нельзя.
+                self.title_changed = src.window.casefold() not in windows.title(self.hwnd).casefold()
             return windows.rect(self.hwnd)
         try:
             import mss
@@ -848,6 +853,10 @@ class RecordSession:
 
     def _done(self) -> None:
         self.recorder.wait(5)
+        if self.title_changed:
+            log.info("Заголовок окна менялся во время записи: сценарий будет искать окно по процессу %s",
+                     self.source.process)
+            self.recorder.builder.source = Source(self.source.monitor, "", self.source.process)
         text = self.recorder.builder.to_yaml()
         self.top.destroy()
         log.info("Запись остановлена: %d шагов (кликов поймано: %s, вне окна: %d)", len(self.recorder.builder.steps()),

@@ -187,13 +187,17 @@ class InputHooks:
             self._ready.set()
             return
         self._ready.set()
+        log.debug("Хуки мыши и клавиатуры установлены (поток %d)", self._thread_id)
         msg = wintypes.MSG()
         try:
-            while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            while (r := user32.GetMessageW(ctypes.byref(msg), None, 0, 0)) > 0:
                 pass
+            if r < 0:
+                log.warning("Цикл сообщений хуков прервался: ошибка %d", ctypes.get_last_error())
         finally:
             user32.UnhookWindowsHookEx(mouse)
             user32.UnhookWindowsHookEx(keys)
+            log.debug("Хуки сняты, поймано кликов: %d", self.received)
 
 
 OWN_PID = os.getpid()

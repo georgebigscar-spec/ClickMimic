@@ -141,6 +141,10 @@ def find_window(title: str, process: str | None = None) -> Window | None:
     return None
 
 
+def title(hwnd: int) -> str:
+    return _title(hwnd) if sys.platform == "win32" else ""
+
+
 def exists(hwnd: int) -> bool:
     return sys.platform == "win32" and bool(user32.IsWindow(hwnd))
 
