@@ -45,6 +45,7 @@ jobs:
           # В exe идёт сборка onnxruntime с DirectML: она умеет и процессор, и любую видеокарту DX12.
           pip uninstall -y onnxruntime
           pip install onnxruntime-directml
+          python -c "import onnxruntime as o; print(o.__version__, o.get_available_providers())"
 
       - name: Prepare ONNX models
         run: python packaging/prepare_models.py build/models

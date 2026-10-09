@@ -36,8 +36,15 @@ def providers(device: str) -> list[str]:
     DirectML работает на любой видеокарте с DirectX 12 (NVIDIA, AMD, Intel), но есть только
     в сборке onnxruntime-directml; без неё или без видеокарты остаётся процессор.
     """
+    import logging
+
     import onnxruntime as ort
 
-    if device != "cpu" and "DmlExecutionProvider" in ort.get_available_providers():
+    available = ort.get_available_providers()
+    if device != "cpu" and "DmlExecutionProvider" in available:
         return ["DmlExecutionProvider", "CPUExecutionProvider"]
+    if device == "gpu":
+        logging.getLogger("clickmimic").warning(
+            "DirectML недоступен (onnxruntime %s, провайдеры: %s), работаю на процессоре",
+            ort.__version__, ", ".join(available))
     return ["CPUExecutionProvider"]
