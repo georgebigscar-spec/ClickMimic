@@ -49,7 +49,7 @@ class WindowsTextReader:
         self.last_stats: dict[str, float] = {}
 
     def read(self, rgb: np.ndarray, upscale: bool = True) -> list[tuple[BBox, str, float]]:
-        from winrt.windows.graphics.imaging import BitmapAlphaMode, BitmapPixelFormat, SoftwareBitmap
+        from winrt.windows.graphics.imaging import BitmapPixelFormat, SoftwareBitmap
         from winrt.windows.storage.streams import DataWriter
 
         t0 = time.perf_counter()
@@ -65,8 +65,8 @@ class WindowsTextReader:
         bgra[..., 3] = 255
         writer = DataWriter()
         writer.write_bytes(bgra.tobytes())
-        bitmap = SoftwareBitmap.create_copy_from_buffer(writer.detach_buffer(), BitmapPixelFormat.BGRA8, w, h,
-                                                        BitmapAlphaMode.PREMULTIPLIED)
+        # перегрузка с BitmapAlphaMode в pywinrt не проецируется; без неё альфа и так premultiplied
+        bitmap = SoftwareBitmap.create_copy_from_buffer(writer.detach_buffer(), BitmapPixelFormat.BGRA8, w, h)
         result = asyncio.run(self._recognize(bitmap))
         out = []
         for line in result.lines:
