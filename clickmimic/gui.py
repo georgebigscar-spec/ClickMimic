@@ -38,6 +38,7 @@ class GuiSettings:
     box_threshold: float = 0.05
     ocr_min_score: float = 0.5
     device: str = "cpu"  # "cpu" или "gpu" (DirectML)
+    ocr: str = "rapid"  # "rapid" (RapidOCR) или "windows" (встроенный OCR Windows)
     live_interval: float = 0.5
     show_ids: bool = True
     activate_window: bool = False
@@ -104,7 +105,7 @@ def default_detector_factory(s: GuiSettings):
     from .detect.omniparser import OmniParser, OmniParserConfig
 
     return OmniParser(OmniParserConfig(box_threshold=s.box_threshold, imgsz=s.imgsz, ocr_min_score=s.ocr_min_score,
-                                       device=s.device))
+                                       device=s.device, ocr=s.ocr))
 
 
 class QueueLogHandler(logging.Handler):
@@ -648,7 +649,7 @@ class App:
         SettingsDialog(self)
 
     def apply_settings(self, new: GuiSettings) -> None:
-        model_keys = ("imgsz", "box_threshold", "ocr_min_score", "device")
+        model_keys = ("imgsz", "box_threshold", "ocr_min_score", "device", "ocr")
         reload = any(getattr(new, k) != getattr(self.s, k) for k in model_keys)
         self.s = new
         self._persist()
@@ -941,6 +942,8 @@ class SettingsDialog:
         self.interval = tk.StringVar(value=str(s.live_interval))
         self.devices = {"Процессор": "cpu", "Видеокарта (DirectML)": "gpu"}
         self.device = tk.StringVar(value=next((k for k, v in self.devices.items() if v == s.device), "Процессор"))
+        self.engines = {"RapidOCR": "rapid", "Встроенный OCR Windows": "windows"}
+        self.engine = tk.StringVar(value=next((k for k, v in self.engines.items() if v == s.ocr), "RapidOCR"))
         self.show_ids = tk.BooleanVar(value=s.show_ids)
         self.activate = tk.BooleanVar(value=s.activate_window)
         self.minimize = tk.BooleanVar(value=s.minimize_during_run)
@@ -948,6 +951,8 @@ class SettingsDialog:
         rows = [
             ("Устройство", ttk.Combobox(frm, textvariable=self.device, values=list(self.devices), state="readonly", width=22),
              "видеокарта ускоряет YOLO; без неё работает процессор"),
+            ("Распознавание текста", ttk.Combobox(frm, textvariable=self.engine, values=list(self.engines), state="readonly", width=22),
+             "OCR Windows быстрее, RapidOCR точнее на мелком тексте"),
             ("Размер входа YOLO", ttk.Combobox(frm, textvariable=self.imgsz, values=["640", "960", "1280", "1600"], width=8),
              "меньше — быстрее, но мелкие иконки теряются"),
             ("Порог уверенности YOLO", ttk.Spinbox(frm, textvariable=self.box, from_=0.01, to=0.9, increment=0.01, width=8),
@@ -985,6 +990,7 @@ class SettingsDialog:
                 **asdict(self.app.s),
                 "imgsz": int(self.imgsz.get()),
                 "device": self.devices[self.device.get()],
+                "ocr": self.engines[self.engine.get()],
                 "box_threshold": float(self.box.get().replace(",", ".")),
                 "ocr_min_score": float(self.ocr.get().replace(",", ".")),
                 "live_interval": float(self.interval.get().replace(",", ".")),

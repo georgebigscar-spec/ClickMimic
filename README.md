@@ -62,6 +62,9 @@ python packaging/prepare_models.py
 - **Шаги сценария по тексту** (`click: {text: ...}` без `interactable`/`id`) пропускают YOLO.
 - **Видеокарта**: `--device gpu` или «Устройство» в настройках окна. Сборка использует onnxruntime-directml,
   он работает с любой видеокартой DirectX 12; без неё остаётся процессор.
+- **Встроенный OCR Windows 10/11**: `--ocr windows` или «Распознавание текста» в настройках окна. Обычно
+  быстрее RapidOCR на новом кадре, но хуже читает мелкий и бледный текст. Русский язык ставится так
+  (PowerShell от администратора): `Add-WindowsCapability -Online -Name "Language.OCR~~~ru-RU~0.0.1.0"`.
 
 ## Окно программы
 

@@ -32,6 +32,7 @@ class OmniParserConfig:
     ocr_min_score: float = 0.5
     device: str = "cpu"  # "cpu", "gpu" (DirectML) или "auto"
     parallel: bool = True  # YOLO и OCR одновременно, в двух потоках
+    ocr: str = "rapid"  # "rapid" (RapidOCR) или "windows" (встроенный OCR Windows 10/11)
 
 
 class OmniParser:
@@ -47,7 +48,12 @@ class OmniParser:
         self.icons = IconDetector(
             require(root / ICON_DETECT), self.cfg.imgsz, self.cfg.box_threshold, self.cfg.iou_threshold, prov
         )
-        self.ocr = TextReader(require(root / OCR_DIR), self.cfg.ocr_min_score, gpu=prov[0] != "CPUExecutionProvider")
+        if self.cfg.ocr == "windows":
+            from .winocr import WindowsTextReader
+
+            self.ocr = WindowsTextReader()
+        else:
+            self.ocr = TextReader(require(root / OCR_DIR), self.cfg.ocr_min_score, gpu=prov[0] != "CPUExecutionProvider")
         self.device = self.icons.device
         self.load_time = time.perf_counter() - t
         self.last_timings: dict[str, float] = {}
@@ -98,6 +104,8 @@ def format_timings(t: dict[str, float]) -> str:
     if t.get("same_frame"):
         return f"кадр не изменился, модели пропущены, всего {t['total'] * 1000:.0f} мс"
     yolo = f"YOLO {t['yolo'] * 1000:.0f} мс" if t.get("icons", 1) else "YOLO пропущен"
+    if t.get("ocr_engine") == "windows":
+        return f"{yolo}, OCR Windows {t['ocr_det'] * 1000:.0f} мс ({int(t['lines'])} строк), всего {t['total'] * 1000:.0f} мс"
     return (
         f"{yolo}, OCR поиск {t['ocr_det'] * 1000:.0f} мс, "
         f"OCR распознавание {t['ocr_rec'] * 1000:.0f} мс ({int(t['lines_recognized'])} из {int(t['lines'])} строк, "

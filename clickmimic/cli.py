@@ -13,7 +13,7 @@ from .net import use_system_certs
 def _detector(args):
     from .detect.omniparser import OmniParser, OmniParserConfig
 
-    cfg = OmniParserConfig(device=args.device, parallel=not getattr(args, "sequential", False))
+    cfg = OmniParserConfig(device=args.device, parallel=not getattr(args, "sequential", False), ocr=args.ocr)
     if args.imgsz:
         cfg.imgsz = args.imgsz
     parser = OmniParser(cfg)
@@ -122,6 +122,8 @@ def main(argv: list[str] | None = None) -> int:
     pp.add_argument("--json", help="сохранить элементы в JSON")
     pp.add_argument("--repeat", type=int, default=1, help="распознать N раз подряд (замер скорости; со 2-го раза работает кэш OCR)")
     pp.add_argument("--imgsz", type=int, help="размер входа YOLO (по умолчанию 1280; 960/640 быстрее, но мелкие иконки теряются)")
+    pp.add_argument("--ocr", choices=["rapid", "windows"], default="rapid",
+                    help="распознавание текста: RapidOCR или встроенный OCR Windows 10/11")
     pp.add_argument("--device", choices=["cpu", "gpu", "auto"], default="cpu",
                     help="gpu = видеокарта через DirectML (если есть), auto = видеокарта, иначе процессор")
     pp.add_argument("--sequential", action="store_true", help="YOLO и OCR по очереди, а не параллельно (для сравнения)")
@@ -134,6 +136,8 @@ def main(argv: list[str] | None = None) -> int:
     pr.add_argument("--var", action="append", default=[], metavar="KEY=VALUE", help="подстановка ${KEY}")
     pr.add_argument("--dry-run", action="store_true", help="распознавать, но не нажимать")
     pr.add_argument("--imgsz", type=int, help="размер входа YOLO")
+    pr.add_argument("--ocr", choices=["rapid", "windows"], default="rapid",
+                    help="распознавание текста: RapidOCR или встроенный OCR Windows 10/11")
     pr.add_argument("--device", choices=["cpu", "gpu", "auto"], default="cpu",
                     help="gpu = видеокарта через DirectML (если есть), auto = видеокарта, иначе процессор")
     pr.add_argument("--window", help="работать с окном, в заголовке которого есть этот текст (перекрывает settings.window)")
